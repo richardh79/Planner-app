@@ -56,6 +56,19 @@ The app also writes `data/log.jsonl`, one JSON object per tracked session.
 `index.html` shell and styling, `app.js` everything else, `sw.js` the service
 worker, `manifest.webmanifest` what makes it installable.
 
+**One building block: the band.** Every card, row and block is a `.band` whose
+accent comes from a single `--a` custom property, and its background is mixed
+from that accent with `color-mix`. Colour is applied to the element itself.
+
+Never tint by layering an absolutely positioned pseudo-element over content.
+An earlier build did, and it washed the whole page out and swallowed taps on
+anything the overlay covered. If `color-mix` is unsupported the band falls back
+to a plain surface, which is dull but correct.
+
+Minimum touch target is 44px, base type is 17px, and both themes are real: the
+palette is defined for light and dark and a toggle in the header overrides the
+system setting.
+
 Check syntax before pushing: `node --check app.js && node --check sw.js`.
 A missing bracket ships a blank screen.
 
