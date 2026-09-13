@@ -36,6 +36,8 @@ function ago(iso){
 var DEFAULT = {
   updated:"",
   headline:"Not connected yet. Open settings, add the repository and a token, and the board loads.",
+  apex:"",
+  goals:[],
   threads:[],
   week:[[],[],[],[],[],[],[]],
   open:[]
@@ -102,6 +104,22 @@ function appendLog(line){
   });
 }
 
+function pullLog(){
+  return gh("/contents/data/log.jsonl", {soft404:true}).then(function(r){
+    if(!r||!r.content) return;
+    var cut=Date.now()-7*864e5, acc={};
+    b64d(r.content).split("\n").forEach(function(ln){
+      if(!ln.trim()) return;
+      var o=null; try{ o=JSON.parse(ln); }catch(e){ return; }
+      if(!o||!o.thread||!o.start) return;
+      if(new Date(o.start).getTime()<cut) return;
+      if(!(o.minutes>0) || o.minutes>720) return;   // a 12h session means he forgot to stop
+      acc[o.thread]=(acc[o.thread]||0)+o.minutes;
+    });
+    mins=acc; put(K.mins,mins);
+  });
+}
+
 function flushQueue(){
   if(!token || !queue.length) return Promise.resolve();
   var item = queue[0];
@@ -141,6 +159,28 @@ function suggested(){
   return board.threads[0];
 }
 
+function goalOf(t){
+  if(!t || !t.goal) return null;
+  for(var i=0;i<(board.goals||[]).length;i++) if(board.goals[i].id===t.goal) return board.goals[i];
+  return null;
+}
+function threadsFor(gid){
+  return board.threads.filter(function(t){ return (t.goal||"")===gid; });
+}
+function liveMins(t){
+  return (mins[t.id]||0) + ((focus&&focus.id===t.id)?(Date.now()-focus.at)/60000:0);
+}
+function alignment(){
+  var on=0, off=0;
+  board.threads.forEach(function(t){
+    var m=liveMins(t);
+    if(!m) return;
+    if(t.critical) on+=m; else off+=m;
+  });
+  var tot=on+off;
+  return { on:on, off:off, tot:tot, pc: tot?Math.round(on/tot*100):0 };
+}
+
 /* ---------- tracking ---------- */
 function startFocus(id){
   if(focus && focus.id!==id) stopFocus(true);
@@ -156,7 +196,7 @@ function stopFocus(chain){
     var line = JSON.stringify({thread:f.id, start:new Date(f.at).toISOString(),
                                end:new Date().toISOString(), minutes:m});
     queue.push({kind:"log", line:line}); put(K.queue,queue);
-    flushQueue().then(function(){ if(view==="threads"||view==="now") render(); });
+    flushQueue().then(function(){ pullLog().then(render).catch(function(){ render(); }); });
   }
   if(!chain) render();
 }
@@ -172,14 +212,10 @@ function recStart(target){
   var box=$(target); recBase = box?box.value:sayText;
   var r; try{ r=new SR(); }catch(e){ recHint="Could not start: "+e.message; render(); return; }
   r.lang=LANGS[langIx][0]; r.continuous=true; r.interimResults=true;
-  var fin="";
   r.onresult=function(ev){
-    var it="";
-    for(var i=ev.resultIndex;i<ev.results.length;i++){
-      var tx=ev.results[i][0].transcript;
-      if(ev.results[i].isFinal) fin+=tx; else it+=tx;
-    }
-    var out=(recBase?recBase+" ":"")+fin+it;
+    var all="";
+    for(var i=0;i<ev.results.length;i++) all += ev.results[i][0].transcript;
+    var out=(recBase?recBase+" ":"")+all;
     sayText=out;
     var b=$(target); if(b) b.value=out;
   };
@@ -203,8 +239,8 @@ function render(){
   try{
     m.innerHTML="";
     $("clk").textContent = DAYS[new Date().getDay()]+" "+hm(nowMin());
-    $("ttl").textContent = {now:"Now",threads:"Threads",say:"Say",inbox:"Inbox"}[view];
-    ({now:vNow, threads:vThreads, say:vSay, inbox:vInbox}[view])(m);
+    $("ttl").textContent = {now:"Now",map:"Map",threads:"Threads",say:"Say",inbox:"Inbox"}[view];
+    ({now:vNow, map:vMap, threads:vThreads, say:vSay, inbox:vInbox}[view])(m);
     Array.prototype.forEach.call(document.querySelectorAll("nav button"),function(b){
       if(b.dataset.v===view) b.setAttribute("aria-current","page"); else b.removeAttribute("aria-current");
     });
@@ -306,6 +342,97 @@ function vNow(m){
 
   var f=el("p","note","Board updated "+(board.updated||"—")+(syncMsg?(" · "+syncMsg):""));
   m.appendChild(f);
+}
+
+function vMap(m){
+  var a=alignment();
+
+  var al=el("div","card align");
+  var pc=el("span","pc", a.tot?(a.pc+"%"):"—");
+  pc.style.color = a.tot ? (a.pc>=60?"var(--money)":(a.pc>=35?"var(--hot)":"var(--bad)")) : "var(--faint)";
+  al.appendChild(pc);
+  al.appendChild(el("span","cap", a.tot
+    ? "of the last seven days' tracked hours went to the critical path. "+dur(a.on)+" on, "+dur(a.off)+" elsewhere."
+    : "No tracked hours in the last seven days. Start a thread and this becomes the honest number."));
+  if(a.tot){
+    var rail=el("div","rail");
+    var i1=el("i"); i1.style.cssText="background:var(--hot);width:"+a.pc+"%";
+    var i2=el("i"); i2.style.cssText="background:var(--neutral);width:"+(100-a.pc)+"%";
+    rail.appendChild(i1); rail.appendChild(i2); al.appendChild(rail);
+    var lg=el("div","legend");
+    [["--hot","Critical path"],["--neutral","Everything else"]].forEach(function(x){
+      var sp=el("span"); var b=el("b"); b.style.background="var("+x[0]+")";
+      sp.appendChild(b); sp.appendChild(document.createTextNode(x[1])); lg.appendChild(sp);
+    });
+    al.appendChild(lg);
+  }
+  m.appendChild(al);
+
+  if(board.apex){
+    var ap=el("div","card apex");
+    ap.appendChild(el("span","lb","Everything points here"));
+    ap.appendChild(el("p","any",board.apex));
+    m.appendChild(ap);
+  }
+
+  var s=el("div","sec"), h=el("div","sech");
+  h.appendChild(el("h2",null,"What each thread is for"));
+  h.appendChild(el("span",null,"tap any thread"));
+  s.appendChild(h);
+
+  (board.goals||[]).forEach(function(g){
+    var c=el("div","card tint goal"); c.style.color="var("+g.c+")";
+    var gh=el("div","goalh");
+    gh.appendChild(el("b","any",g.n));
+    gh.appendChild(el("em",null, g.target!=null ? (g.now+" / "+g.target) : ""));
+    c.appendChild(gh);
+    if(g.why) c.appendChild(el("p","any",g.why)).style.cssText="margin:5px 0 0;font-size:.74rem;color:var(--dim);line-height:1.4";
+    if(g.target){
+      var rail=el("div","rail"); var f=el("i");
+      f.style.width=Math.max(Math.round(g.now/g.target*100),3)+"%";
+      rail.appendChild(f); c.appendChild(rail);
+    }
+    var fd=el("div","feed"), list=threadsFor(g.id);
+    if(!list.length) fd.appendChild(el("p","note","Nothing is feeding this."));
+    list.forEach(function(t){
+      var mm=liveMins(t), on=!!(focus&&focus.id===t.id);
+      var b=el("button","fd"+(on?" run":"")+(mm?"":" cold"));
+      b.style.color="var("+t.c+")";
+      b.appendChild(el("span","pip"));
+      var nm=el("span","nm any"); nm.textContent=t.n;
+      nm.appendChild(el("u",null,t.st[t.at]+(t.critical?" · critical path":"")));
+      b.appendChild(nm);
+      b.appendChild(el("span","hr", on?"running":(mm?dur(mm):"0m")));
+      b.addEventListener("click",function(){ openThread(t); });
+      fd.appendChild(b);
+    });
+    c.appendChild(fd);
+    s.appendChild(c);
+  });
+
+  var orphan=board.threads.filter(function(t){ return !goalOf(t); });
+  if(orphan.length){
+    var oc=el("div","card goal"); oc.style.color="var(--neutral)";
+    var oh=el("div","goalh");
+    oh.appendChild(el("b",null,"Serving no goal"));
+    oh.appendChild(el("em",null,String(orphan.length)));
+    oc.appendChild(oh);
+    oc.appendChild(el("p","any","Work that does not feed anything you said you want. Either it earns a goal or it stops.")).style.cssText="margin:5px 0 0;font-size:.74rem;color:var(--dim);line-height:1.4";
+    var of2=el("div","feed");
+    orphan.forEach(function(t){
+      var mm=liveMins(t);
+      var b=el("button","fd"+(mm?"":" cold")); b.style.color="var("+t.c+")";
+      b.appendChild(el("span","pip"));
+      var nm=el("span","nm any"); nm.textContent=t.n;
+      nm.appendChild(el("u",null,t.st[t.at]));
+      b.appendChild(nm);
+      b.appendChild(el("span","hr", mm?dur(mm):"0m"));
+      b.addEventListener("click",function(){ openThread(t); });
+      of2.appendChild(b);
+    });
+    oc.appendChild(of2); s.appendChild(oc);
+  }
+  m.appendChild(s);
 }
 
 function vThreads(m){
@@ -506,6 +633,65 @@ function openIssue(is){
   });
 }
 
+function openThread(t){
+  sheet(function(sh){
+    var g=goalOf(t), on=!!(focus&&focus.id===t.id);
+    var hd=el("div","hd");
+    var L=el("div"); L.style.minWidth="0";
+    L.appendChild(el("span","lb", g?("For: "+g.n):"Serving no goal"));
+    L.appendChild(el("b","any",t.n));
+    var x=el("button",null,"✕"); x.style.cssText="flex:none;color:var(--dim);padding:2px 4px";
+    x.addEventListener("click",closeSheet);
+    hd.appendChild(L); hd.appendChild(x); sh.appendChild(hd);
+
+    var sub=el("p","any",t.why||"");
+    sub.style.cssText="margin:6px 0 0;font-size:.8rem;color:var(--ink2);line-height:1.45";
+    sh.appendChild(sub);
+
+    var meta=el("p","note");
+    meta.textContent = (on?"Running now. ":"") + dur(liveMins(t)) + " in the last seven days" +
+                       (t.critical?" · on the critical path":"");
+    sh.appendChild(meta);
+
+    sh.appendChild(el("span","lb","Stage")).style.cssText="display:block;margin-top:14px;color:var(--faint)";
+    var track=el("div"); track.style.cssText="display:flex;flex-direction:column;gap:1px;margin-top:6px";
+    t.st.forEach(function(name,ix){
+      var b=el("button","fd"); b.style.color="var("+t.c+")";
+      var pip=el("span","pip"); if(ix>t.at) pip.style.background="var(--faint)";
+      b.appendChild(pip);
+      var nm=el("span","nm any"); nm.textContent=name;
+      if(ix===t.at) nm.style.fontWeight="600";
+      b.appendChild(nm);
+      b.appendChild(el("span","hr", ix===t.at?"now":(ix<t.at?"done":"")));
+      b.addEventListener("click",function(){
+        if(ix===t.at){ return; }
+        propose(t, name);
+      });
+      track.appendChild(b);
+    });
+    sh.appendChild(track);
+    sh.appendChild(el("p","note","Tap a stage to tell Claude it moved. The board is rewritten from the repository, never from the phone, so the reason is kept with the change."));
+
+    var row=el("div","row");
+    var go=el("button","btn", on?"Stop tracking":"Start working");
+    go.addEventListener("click",function(){ on?stopFocus():startFocus(t.id); closeSheet(); });
+    var sp=el("button","btn gh","Speak an update");
+    sp.addEventListener("click",function(){ closeSheet(); sayThread=t.id; view="say"; render(); });
+    row.appendChild(go); row.appendChild(sp); sh.appendChild(row);
+  });
+}
+
+function propose(t, stage){
+  var title="Update: "+t.n;
+  var body="Moved to **"+stage+"**.\n\n---\nThread: `"+t.id+"`\nSent from the Planner app, "+new Date().toISOString()+".";
+  queue.push({kind:"issue", title:title, body:body}); put(K.queue,queue);
+  closeSheet(); syncMsg="sending"; render();
+  flushQueue().then(function(){
+    syncMsg = queue.length ? "queued, no signal" : "sent";
+    issues=null; loadIssues(true).then(render);
+  });
+}
+
 function settings(){
   sheet(function(sh){
     var hd=el("div","hd");
@@ -537,7 +723,7 @@ function settings(){
       $("setst").textContent="Testing…"; $("setst").className="note";
       gh("/issues?per_page=1").then(function(){
         return pullBoard();
-      }).then(function(){
+      }).then(function(){ return pullLog(); }).then(function(){
         $("setst").textContent="Connected. Board synced.";
         $("setst").className="note ok";
         issues=null; flushQueue(); loadIssues(true).then(render);
@@ -571,6 +757,7 @@ if(token){
   flushQueue();
   pullBoard().then(function(j){ if(j){ syncMsg="synced"; render(); } })
              .catch(function(e){ syncMsg=e.message; });
+  pullLog().then(render).catch(function(){});
 }
 
 if("serviceWorker" in navigator){
