@@ -862,7 +862,7 @@ if(token){
 
 if("serviceWorker" in navigator){
   window.addEventListener("load",function(){
-    navigator.serviceWorker.register("sw.js?v=7",{updateViaCache:"none"}).then(function(reg){
+    navigator.serviceWorker.register("sw.js?v=8",{updateViaCache:"none"}).then(function(reg){
       try{ reg.update(); }catch(e){}
     }).catch(function(){});
   });
