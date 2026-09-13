@@ -39,6 +39,7 @@ var DEFAULT = {
   headline:"Not connected yet. Open settings, add the repository and a token, and the board loads.",
   apex:"",
   goals:[],
+  events:[],
   threads:[],
   week:[[],[],[],[],[],[],[]],
   open:[]
@@ -389,6 +390,20 @@ function vNow(m){
     m.appendChild(s2);
   }
 
+  var evs=(board.events||[]).slice().sort(function(a,b){ return (a.date||"")<(b.date||"")?-1:1; });
+  if(evs.length){
+    var today=new Date(); today.setHours(0,0,0,0);
+    var soon=evs.filter(function(e){ return e.date && new Date(e.date+"T00:00:00")>=today && e.status!=="unconfirmed"; });
+    var unsure=evs.filter(function(e){ return e.status==="unconfirmed"; });
+    if(soon.length || unsure.length){
+      var se=el("div","sec");
+      se.appendChild(sech("Coming up", soon.length?(soon.length+" booked"):""));
+      soon.slice(0,6).forEach(function(e){ se.appendChild(eventBand(e,false)); });
+      unsure.forEach(function(e){ se.appendChild(eventBand(e,true)); });
+      m.appendChild(se);
+    }
+  }
+
   if(board.open && board.open.length){
     var s3=el("div","sec");
     s3.appendChild(sech("Waiting on you", board.open.length+" open"));
@@ -407,6 +422,31 @@ function vNow(m){
   }
 
   m.appendChild(el("p","note","Board updated "+(board.updated||"—")+(syncMsg?(" · "+syncMsg):"")));
+}
+
+function eventBand(e, unsure){
+  var b=band("blk", unsure?"--hot":(e.c||"--conf"));
+  var when=e.date||"date unknown";
+  if(e.date){
+    var d=new Date(e.date+"T00:00:00");
+    var days=Math.round((d-new Date().setHours(0,0,0,0))/864e5);
+    when = FULL[d.getDay()].slice(0,3)+" "+e.date.slice(8)+" "+
+           ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()];
+    if(days===0) when="Today";
+    else if(days===1) when="Tomorrow";
+    else if(days>1) when=when+" · "+days+"d";
+    else when=when+" · passed";
+  }
+  b.appendChild(el("span","t",when));
+  var d2=el("span","d");
+  d2.appendChild(el("b","any",e.n));
+  var sub=[];
+  if(e.start) sub.push(e.start+(e.end?("–"+e.end):""));
+  if(e.where) sub.push(e.where);
+  if(unsure) sub.push("date needs confirming");
+  d2.appendChild(el("span","any",sub.join(" · ")));
+  b.appendChild(d2);
+  return b;
 }
 
 function sech(title, right){
@@ -822,7 +862,7 @@ if(token){
 
 if("serviceWorker" in navigator){
   window.addEventListener("load",function(){
-    navigator.serviceWorker.register("sw.js?v=6",{updateViaCache:"none"}).then(function(reg){
+    navigator.serviceWorker.register("sw.js?v=7",{updateViaCache:"none"}).then(function(reg){
       try{ reg.update(); }catch(e){}
     }).catch(function(){});
   });
