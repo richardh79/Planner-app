@@ -239,8 +239,11 @@ function render(){
   try{
     m.innerHTML="";
     $("clk").textContent = DAYS[new Date().getDay()]+" "+hm(nowMin());
-    $("ttl").textContent = {now:"Now",map:"Map",threads:"Threads",say:"Say",inbox:"Inbox"}[view];
-    ({now:vNow, map:vMap, threads:vThreads, say:vSay, inbox:vInbox}[view])(m);
+    $("ttl").textContent = ({now:"Now",map:"Map",threads:"Threads",say:"Say",inbox:"Inbox"}[view])||"Now";
+    var VIEWS={now:vNow, map:vMap, threads:vThreads, say:vSay, inbox:vInbox};
+    var fn=VIEWS[view];
+    if(typeof fn!=="function"){ view="now"; fn=vNow; }
+    fn(m);
     Array.prototype.forEach.call(document.querySelectorAll("nav button"),function(b){
       if(b.dataset.v===view) b.setAttribute("aria-current","page"); else b.removeAttribute("aria-current");
     });
@@ -762,7 +765,9 @@ if(token){
 
 if("serviceWorker" in navigator){
   window.addEventListener("load",function(){
-    navigator.serviceWorker.register("sw.js").catch(function(){});
+    navigator.serviceWorker.register("sw.js?v=4",{updateViaCache:"none"}).then(function(reg){
+      try{ reg.update(); }catch(e){}
+    }).catch(function(){});
   });
 }
 })();

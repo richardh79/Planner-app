@@ -57,5 +57,14 @@ The app also writes `data/log.jsonl`, one JSON object per tracked session.
 worker, `manifest.webmanifest` what makes it installable.
 
 Check syntax before pushing: `node --check app.js && node --check sw.js`.
-A missing bracket ships a blank screen. Bump `CACHE` in `sw.js` whenever
-`app.js` or `index.html` changes, or browsers keep serving the old copy.
+A missing bracket ships a blank screen.
+
+**Bump the version on every change to `app.js` or `index.html`.** There are
+three places and all three must move together: the `?v=` on the script tag in
+`index.html`, the same `?v=` in the `SHELL` list and the `CACHE` name in
+`sw.js`, and the `?v=` on the `register()` call in `app.js`.
+
+This is not tidiness. Pages serves assets with browser caching, so a new
+`index.html` will happily run an old `app.js`, and a nav button added in one
+file calls a function that does not exist in the other. The app is built to
+survive that (an unknown view falls back to Now) but the fix is the version.
