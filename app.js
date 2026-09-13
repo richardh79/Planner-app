@@ -4,7 +4,8 @@
 "use strict";
 
 var K    = { tok:"planner.token", repo:"planner.repo", board:"planner.board", focus:"planner.focus",
-             mins:"planner.mins", queue:"planner.queue", lang:"planner.lang", theme:"planner.theme" };
+             mins:"planner.mins", queue:"planner.queue", lang:"planner.lang", theme:"planner.theme",
+             running:"planner.running" };
 function REPO(){ return getRaw(K.repo) || ""; }
 function API(){ return "https://api.github.com/repos/" + REPO(); }
 
@@ -49,7 +50,15 @@ var FULL=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"
 /* ---------- state ---------- */
 var board = get(K.board, null) || DEFAULT;
 var token = get(K.tok, "");
-var focus = get(K.focus, null);
+var running = get(K.running, null);
+if(!running){                       // migrate the old single-thread value
+  var old = get(K.focus, null);
+  running = (old && old.id) ? (function(){ var o={}; o[old.id]=old.at; return o; })() : {};
+  put(K.running, running); del(K.focus);
+}
+function isOn(id){ return Object.prototype.hasOwnProperty.call(running,id); }
+function runningIds(){ return Object.keys(running); }
+function runCount(){ return runningIds().length; }
 var mins  = get(K.mins, {});
 var queue = get(K.queue, []);
 var view  = "now";
@@ -168,7 +177,7 @@ function threadsFor(gid){
   return board.threads.filter(function(t){ return (t.goal||"")===gid; });
 }
 function liveMins(t){
-  return (mins[t.id]||0) + ((focus&&focus.id===t.id)?(Date.now()-focus.at)/60000:0);
+  return (mins[t.id]||0) + (isOn(t.id)?(Date.now()-running[t.id])/60000:0);
 }
 function alignment(){
   var on=0, off=0;
@@ -183,22 +192,23 @@ function alignment(){
 
 /* ---------- tracking ---------- */
 function startFocus(id){
-  if(focus && focus.id!==id) stopFocus(true);
-  focus={ id:id, at:Date.now() };
-  put(K.focus,focus); render();
+  if(isOn(id)) return;
+  running[id]=Date.now(); put(K.running,running); render();
 }
-function stopFocus(chain){
-  if(!focus) return;
-  var f=focus, m=Math.round((Date.now()-f.at)/60000);
-  mins[f.id]=(mins[f.id]||0)+m; put(K.mins,mins);
-  focus=null; del(K.focus);
+
+function stopFocus(id){
+  if(id==null){ runningIds().forEach(function(x){ stopFocus(x); }); return; }
+  if(!isOn(id)) return;
+  var at=running[id], m=Math.round((Date.now()-at)/60000);
+  delete running[id]; put(K.running,running);
+  mins[id]=(mins[id]||0)+m; put(K.mins,mins);
   if(m>=1){
-    var line = JSON.stringify({thread:f.id, start:new Date(f.at).toISOString(),
-                               end:new Date().toISOString(), minutes:m});
+    var line=JSON.stringify({thread:id, start:new Date(at).toISOString(),
+                             end:new Date().toISOString(), minutes:m});
     queue.push({kind:"log", line:line}); put(K.queue,queue);
     flushQueue().then(function(){ pullLog().then(render).catch(function(){ render(); }); });
   }
-  if(!chain) render();
+  render();
 }
 
 /* ---------- speech ---------- */
@@ -276,7 +286,12 @@ function vNow(m){
     acc=cur.b[3]; title=cur.b[1]; sub=cur.b[2];
     lv=dur(cur.b[5]-t); lc="left";
     if(cur.b[6]){
-      if(focus){ var f=T(focus.id); if(f){ acc=f.c; title=f.n; sub="Working now."; } }
+      var rc=runCount();
+      if(rc===1){ var f=T(runningIds()[0]); if(f){ acc=f.c; title=f.n; sub="Running now."; } }
+      else if(rc>1){
+        acc="--hot"; title=rc+" threads running";
+        sub=runningIds().map(function(id){ var x=T(id); return x?x.n:id; }).join(" · ");
+      }
       else { var sg=suggested(); if(sg) sub="Nothing started. Suggested: "+sg.n+"."; }
     }
   } else {
@@ -285,7 +300,7 @@ function vNow(m){
   }
 
   var h=band("hero", acc);
-  kicker(h, focus?"Working on":"Right now");
+  kicker(h, runCount()?"Working on":"Right now");
   h.appendChild(el("span","big any",title));
   h.appendChild(el("span","say any",sub));
   var cr=el("div","clockrow");
@@ -298,18 +313,36 @@ function vNow(m){
   cr.appendChild(L); cr.appendChild(R); h.appendChild(cr);
   m.appendChild(h);
 
-  if(focus){
-    var f2=T(focus.id);
-    var r=band("run live", f2?f2.c:"--hot");
-    r.appendChild(el("span","pulse"));
-    var tx=el("span","txt");
-    tx.appendChild(el("b","any", f2?f2.n:focus.id));
-    tx.appendChild(el("span",null, dur((Date.now()-focus.at)/60000)+" this session"));
-    r.appendChild(tx);
-    var st=el("button","pill","Stop");
-    st.addEventListener("click",function(){ stopFocus(); });
-    r.appendChild(st);
-    m.appendChild(r);
+  var ids=runningIds();
+  if(ids.length){
+    ids.forEach(function(id){
+      var t=T(id);
+      var r=band("run live", t?t.c:"--hot");
+      r.appendChild(el("span","pulse"));
+      var tx=el("span","txt");
+      tx.appendChild(el("b","any", t?t.n:id));
+      tx.appendChild(el("span",null, dur((Date.now()-running[id])/60000)+" so far"));
+      r.appendChild(tx);
+      var st=el("button","pill","Stop");
+      st.addEventListener("click",function(){ stopFocus(id); });
+      r.appendChild(st);
+      m.appendChild(r);
+    });
+    var add=band("run","--neutral","button");
+    add.appendChild(el("span","pulse"));
+    var at=el("span","txt");
+    at.appendChild(el("b",null,"Start another"));
+    at.appendChild(el("span",null, ids.length+" running. Nothing stops when you add one."));
+    add.appendChild(at);
+    add.appendChild(el("span","pill","Add"));
+    add.addEventListener("click",function(){ view="threads"; render(); });
+    m.appendChild(add);
+    if(ids.length>1){
+      var all=el("button","wide ghost","Stop all "+ids.length);
+      all.style.marginTop="0"; all.style.marginBottom="10px";
+      all.addEventListener("click",function(){ stopFocus(); });
+      m.appendChild(all);
+    }
   } else {
     var r2=band("run","--neutral","button");
     r2.appendChild(el("span","pulse"));
@@ -449,7 +482,7 @@ function vMap(m){
 }
 
 function threadRow(t){
-  var mm=liveMins(t), on=!!(focus&&focus.id===t.id);
+  var mm=liveMins(t), on=isOn(t.id);
   var b=el("button","row");
   b.style.setProperty("--a","var("+t.c+")");
   var d=el("span","dot"+(mm?"":" cold")); b.appendChild(d);
@@ -470,7 +503,7 @@ function vThreads(m){
   }
   var wrapS=el("div"); wrapS.style.marginTop="2px";
   board.threads.forEach(function(t){
-    var on=!!(focus&&focus.id===t.id), mm=liveMins(t), g=goalOf(t);
+    var on=isOn(t.id), mm=liveMins(t), g=goalOf(t);
     var c=band("", t.c);
     var hd=el("div","thh");
     hd.appendChild(el("b","any",t.n));
@@ -485,7 +518,7 @@ function vThreads(m){
     c.appendChild(f);
     var bts=el("div","thb");
     var go=el("button", on?"go":"", on?"Stop":"Start");
-    go.addEventListener("click",function(e){ e.stopPropagation(); on?stopFocus():startFocus(t.id); });
+    go.addEventListener("click",function(e){ e.stopPropagation(); on?stopFocus(t.id):startFocus(t.id); });
     var sp=el("button",null,"🎙 Say");
     sp.addEventListener("click",function(e){ e.stopPropagation(); sayThread=t.id; view="say"; render(); });
     var mo=el("button",null,"Details");
@@ -628,7 +661,7 @@ function shHead(sh, kickerText, title){
 
 function openThread(t){
   sheet(function(sh){
-    var g=goalOf(t), on=!!(focus&&focus.id===t.id);
+    var g=goalOf(t), on=isOn(t.id);
     shHead(sh, g?("For: "+g.n):"Serving no goal", t.n);
     if(t.why) sh.appendChild(el("p","note any",t.why)).style.color="var(--ink2)";
 
@@ -639,7 +672,7 @@ function openThread(t){
     c.appendChild(f);
     var bts=el("div","thb");
     var go=el("button","go", on?"Stop":"Start working");
-    go.addEventListener("click",function(){ on?stopFocus():startFocus(t.id); closeSheet(); });
+    go.addEventListener("click",function(){ on?stopFocus(t.id):startFocus(t.id); closeSheet(); });
     var sp=el("button",null,"🎙 Say");
     sp.addEventListener("click",function(){ closeSheet(); sayThread=t.id; view="say"; render(); });
     bts.appendChild(go); bts.appendChild(sp); c.appendChild(bts);
@@ -789,7 +822,7 @@ if(token){
 
 if("serviceWorker" in navigator){
   window.addEventListener("load",function(){
-    navigator.serviceWorker.register("sw.js?v=5",{updateViaCache:"none"}).then(function(reg){
+    navigator.serviceWorker.register("sw.js?v=6",{updateViaCache:"none"}).then(function(reg){
       try{ reg.update(); }catch(e){}
     }).catch(function(){});
   });

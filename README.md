@@ -11,9 +11,10 @@ This repository holds the code only. It contains no data of any kind.
 
 - **Now.** Reads the clock against your week and shows the block you are in,
   how long is left, and what comes next.
-- **Threads.** Each piece of work with its stage and progress. One tap starts
-  tracking, another stops it, and the session is appended to a log file in your
-  repository.
+- **Work.** Each piece with its stage and progress. One tap starts tracking,
+  another stops it, and the session is appended to a log file in your
+  repository. **Several threads can run at once**, because real days are not
+  single-threaded; each keeps its own clock and logs its own session.
 - **Say.** Speak or type an update, tag it to a thread, and it becomes an issue.
 - **Inbox.** Open issues with their replies, and a button to close one.
 
