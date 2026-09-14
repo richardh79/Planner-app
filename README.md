@@ -36,17 +36,23 @@ Nothing else ever sees it. Remove it from the same settings screen.
 
 ## The desktop view
 
-`desktop.html` is the same board on a wide screen. Same repository, same token,
-same `data/board.json`; nothing new to install and no second setup beyond
-pasting a token into that browser.
+`desktop.html` is the same data on a wide screen, built as three panes rather
+than a page of cards: a rail of categories on the left, the threads in the
+chosen category in the middle, and one thread open on the right. Nothing is
+expanded that was not asked for.
 
-It shows, on one surface: four numbers across the top, the whole week as seven
-columns, where you are right now, every thread with its stage and the time
-logged against it in the last seven days, the recent sessions from the log, the
-open issues with a button to close one, a box that turns what you type into an
-issue, the year's goals, the questions waiting on you, and what is coming up.
+The detail pane is where the work happens. For the open thread it carries the
+stage (click a stage to set it), a start and stop timer, the files linked to
+it, a box that turns what you type into an issue, and that thread's open
+issues with a close button. Files open in the same pane: pick a section, add a
+dated line, save, and the commit lands in the repository.
 
-Timers start and stop here too, and append to the same `data/log.jsonl`.
+`Today` is the day's plan. Every working block in the week takes exactly one
+thread, chosen from a list, and the choice is written to `data/plan.jsonl`.
+That is the whole point of the view: capacity is rarely the constraint,
+assignment is.
+
+⌘K or Ctrl+K opens a command palette over every thread, category and file.
 
 Open `<your pages url>/desktop.html`. In Chrome or Edge, the install button in
 the address bar turns it into a desktop app in its own window. The phone app is
@@ -68,7 +74,14 @@ open[]    questions waiting on you
 its end is a marker rather than a block and never counts as the current one.
 `c` and `colourVar` are CSS custom property names defined in `index.html`.
 
-The app also writes `data/log.jsonl`, one JSON object per tracked session.
+The app also writes `data/log.jsonl`, one JSON object per tracked session,
+`data/status.jsonl` when a stage is set by hand, and `data/plan.jsonl` when a
+block is assigned to a thread. All three are append-only: the last line for a
+key wins, and nothing is ever rewritten in place.
+
+Threads may also carry `dom` (which category they belong to), `files` (repo
+paths the detail pane can open), `next`, `who` and `critical`. `domains[]`
+gives each category its name and colour.
 
 ## Files
 

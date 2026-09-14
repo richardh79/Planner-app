@@ -1,12 +1,19 @@
-/* Planner, desktop view.
-   Same repository, same token, same board.json as the phone app. No server.
-   Everything the phone shows one tap at a time is on one surface here. */
+/* Planner, desktop cockpit.
+   Three panes: choose a category, choose a thread, work on it. Same repository,
+   same token, same data files as the phone app. No server.
+
+   Writes it makes, all through the GitHub contents and issues API:
+     data/log.jsonl     one line per tracked session
+     data/status.jsonl  one line each time he sets a stage himself
+     any repo file      opened, edited and committed from the detail pane
+     issues             comments and updates, the channel Claude reads
+*/
 (function(){
 "use strict";
 
 var K = { tok:"planner.token", repo:"planner.repo", board:"planner.board",
           mins:"planner.mins", queue:"planner.queue", theme:"planner.theme",
-          running:"planner.running" };
+          running:"planner.running", sel:"planner.sel" };
 
 /* ---------- helpers ---------- */
 function $(id){ return document.getElementById(id); }
@@ -21,7 +28,8 @@ function API(){ return "https://api.github.com/repos/" + REPO(); }
 function hm(t){ var h=Math.floor(t/60)%24, m=t%60; return (h<10?"0":"")+h+":"+(m<10?"0":"")+m; }
 function dur(m){ m=Math.max(0,Math.round(m)); var h=Math.floor(m/60); return h?(h+"h "+(m%60)+"m"):(m+"m"); }
 function nowMin(){ var d=new Date(); return d.getHours()*60+d.getMinutes(); }
-function days(iso){ return Math.floor((Date.now()-new Date(iso).getTime())/864e5); }
+function today(){ var d=new Date(); return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2); }
+function daysSince(iso){ return Math.floor((Date.now()-new Date(iso).getTime())/864e5); }
 function ago(iso){
   var d=(Date.now()-new Date(iso).getTime())/60000;
   if(d<60) return Math.max(1,Math.round(d))+"m ago";
@@ -33,12 +41,12 @@ function b64d(s){
     return "%"+("00"+c.charCodeAt(0).toString(16)).slice(-2); }).join(""));
 }
 function b64e(s){ return btoa(unescape(encodeURIComponent(s))); }
-function safe(f){ try{ f(); }catch(e){ note("Render failed: "+(e&&e.message?e.message:e), "bad"); } }
+function safe(f){ try{ f(); }catch(e){ note("Render failed: "+(e&&e.message?e.message:e),"bad"); } }
 
 var DAYS=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 var FULL=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 var DEFAULT = { updated:"", headline:"Not connected. Open settings, add the repository and a token.",
-                apex:"", goals:[], events:[], threads:[], week:[[],[],[],[],[],[],[]], open:[] };
+                apex:"", goals:[], events:[], threads:[], domains:[], week:[[],[],[],[],[],[],[]], open:[] };
 
 /* ---------- state ---------- */
 var board   = get(K.board, null) || DEFAULT;
@@ -46,15 +54,37 @@ var token   = get(K.tok, "");
 var mins    = get(K.mins, {});
 var running = get(K.running, {});
 var queue   = get(K.queue, []);
+var statuses = {};            // thread id -> {stage, at}
+var plan = {};                // "YYYY-MM-DD#blockIndex" -> thread id
 var recent  = [];
 var issues  = null, issuesErr = "";
 var lastSync = 0, busy = false, stateMsg = "";
-var openIssue = null;
+var sel     = get(K.sel, null) || {kind:"today", id:""};
+var selThread = "";
+var file    = null;           // {path, text, sha, orig, msg, err}
+var palette = null;
 
 function T(id){ for(var i=0;i<board.threads.length;i++) if(board.threads[i].id===id) return board.threads[i]; return null; }
 function isOn(id){ return Object.prototype.hasOwnProperty.call(running,id); }
 function runIds(){ return Object.keys(running); }
-function colour(t){ return "var(" + ((t&&t.c)||"--neutral") + ")"; }
+function cvar(x){ return "var(" + (x||"--neutral") + ")"; }
+function domains(){ return (board.domains&&board.domains.length) ? board.domains : [{id:"",n:"Threads",c:"--accent"}]; }
+function domOf(t){ var d=domains(); for(var i=0;i<d.length;i++) if(d[i].id===(t&&t.dom)) return d[i]; return d[0]; }
+function threadsIn(dom){ return board.threads.filter(function(t){ return t.dom===dom; }); }
+function stageIx(t){
+  var s=statuses[t.id];
+  if(s && typeof s.stage==="number") return Math.max(0,Math.min(s.stage,(t.st||[]).length-1));
+  return t.at||0;
+}
+function stagePending(t){ var s=statuses[t.id]; return !!(s && s.stage!==t.at); }
+function stageName(t){ return (t.st||[])[stageIx(t)] || ""; }
+function isUnset(t){ return !!t.unset && !statuses[t.id]; }
+function liveMins(id){ return (mins[id]||0) + (isOn(id) ? (Date.now()-running[id])/60000 : 0); }
+function domMins(dom){ var s=0; threadsIn(dom).forEach(function(t){ s+=liveMins(t.id); }); return s; }
+function issuesFor(id){
+  if(!issues) return [];
+  return issues.filter(function(i){ return (i.body||"").indexOf("Thread: `"+id+"`")!==-1; });
+}
 
 /* ---------- GitHub ---------- */
 function gh(path, opts){
@@ -74,11 +104,31 @@ function gh(path, opts){
           var m=(j&&j.message)?j.message:("HTTP "+r.status);
           if(r.status===401) m="Token rejected. Make a new one and paste it again.";
           if(r.status===403) m="Token lacks permission. It needs Contents and Issues, read and write.";
+          if(r.status===409) m="That file changed underneath you. Reopen it and redo the edit.";
           throw new Error(m);
         }
         return j;
       });
     });
+}
+
+function getFile(path){
+  return gh("/contents/"+path, {soft404:true}).then(function(r){
+    if(!r||!r.content) return null;
+    return { path:path, text:b64d(r.content), sha:r.sha };
+  });
+}
+function putFile(path, text, sha, message){
+  var body={ message:message||("Update "+path), content:b64e(text) };
+  if(sha) body.sha=sha;
+  return gh("/contents/"+path, {method:"PUT", body:body});
+}
+function appendLine(path, line, message){
+  return gh("/contents/"+path, {soft404:true}).then(function(r){
+    var body = r&&r.content ? b64d(r.content) : "";
+    if(body && body.slice(-1)!=="\n") body += "\n";
+    return putFile(path, body+line+"\n", r&&r.sha, message);
+  });
 }
 
 function pullBoard(){
@@ -89,78 +139,99 @@ function pullBoard(){
     return j;
   });
 }
-
 function pullLog(){
   return gh("/contents/data/log.jsonl", {soft404:true}).then(function(r){
-    if(!r||!r.content){ recent=[]; return; }
+    if(!r||!r.content){ recent=[]; mins={}; return; }
     var cut=Date.now()-7*864e5, acc={}, all=[];
     b64d(r.content).split("\n").forEach(function(ln){
       if(!ln.trim()) return;
       var o=null; try{ o=JSON.parse(ln); }catch(e){ return; }
       if(!o||!o.thread||!o.start) return;
-      if(!(o.minutes>0) || o.minutes>720) return;   // over twelve hours means the timer was left running
+      if(!(o.minutes>0) || o.minutes>720) return;   // over twelve hours is a timer left running
       all.push(o);
       if(new Date(o.start).getTime()>=cut) acc[o.thread]=(acc[o.thread]||0)+o.minutes;
     });
     all.sort(function(a,b){ return new Date(b.start)-new Date(a.start); });
-    recent = all.slice(0,14);
-    mins = acc; put(K.mins,mins);
+    recent=all.slice(0,20); mins=acc; put(K.mins,mins);
   });
 }
-
-function appendLog(line){
-  return gh("/contents/data/log.jsonl", {soft404:true}).then(function(r){
-    var body = r&&r.content ? b64d(r.content) : "";
-    if(body && body.slice(-1)!=="\n") body += "\n";
-    var payload = { message:"Session log", content:b64e(body + line + "\n") };
-    if(r&&r.sha) payload.sha=r.sha;
-    return gh("/contents/data/log.jsonl", {method:"PUT", body:payload});
+function pullStatus(){
+  return gh("/contents/data/status.jsonl", {soft404:true}).then(function(r){
+    statuses={};
+    if(!r||!r.content) return;
+    b64d(r.content).split("\n").forEach(function(ln){
+      if(!ln.trim()) return;
+      var o=null; try{ o=JSON.parse(ln); }catch(e){ return; }
+      if(!o||!o.thread) return;
+      statuses[o.thread]=o;
+    });
   });
+}
+function pullPlan(){
+  return gh("/contents/data/plan.jsonl", {soft404:true}).then(function(r){
+    plan={};
+    if(!r||!r.content) return;
+    b64d(r.content).split("\n").forEach(function(ln){
+      if(!ln.trim()) return;
+      var o=null; try{ o=JSON.parse(ln); }catch(e){ return; }
+      if(!o||!o.date||typeof o.block!=="number") return;
+      plan[o.date+"#"+o.block]=o.thread||"";
+    });
+  });
+}
+function assign(dateStr, blockIx, threadId){
+  plan[dateStr+"#"+blockIx]=threadId;
+  queue.push({kind:"plan", line:JSON.stringify({date:dateStr, block:blockIx, thread:threadId,
+    at:new Date().toISOString()})});
+  put(K.queue,queue); note("Saving the plan…"); render();
+  flushQueue().then(function(){ stateMsg="Plan saved."; render(); })
+    .catch(function(e){ note(e.message,"bad"); });
+}
+function planned(dateStr, blockIx){ return plan[dateStr+"#"+blockIx]||""; }
+
+function loadIssues(){
+  return gh("/issues?state=open&per_page=60&sort=created&direction=desc").then(function(r){
+    issues=(r||[]).filter(function(x){ return !x.pull_request; }); issuesErr="";
+  }).catch(function(e){ issuesErr=e.message; });
 }
 
 function flushQueue(){
   if(!token || !queue.length) return Promise.resolve();
-  var item = queue[0];
-  var p = item.kind==="log" ? appendLog(item.line)
-        : gh("/issues", {method:"POST", body:{title:item.title, body:item.body}});
+  var item=queue[0], p;
+  if(item.kind==="log")       p=appendLine("data/log.jsonl", item.line, "Session log");
+  else if(item.kind==="status") p=appendLine("data/status.jsonl", item.line, "Stage set from the desktop");
+  else if(item.kind==="plan")   p=appendLine("data/plan.jsonl", item.line, "Day assigned from the desktop");
+  else                        p=gh("/issues", {method:"POST", body:{title:item.title, body:item.body}});
   return p.then(function(){
     queue.shift(); put(K.queue,queue);
     return queue.length ? flushQueue() : null;
   }).catch(function(){ /* stays queued */ });
 }
 
-function loadIssues(){
-  return gh("/issues?state=open&per_page=30&sort=created&direction=desc").then(function(r){
-    issues=(r||[]).filter(function(x){ return !x.pull_request; }); issuesErr="";
-  }).catch(function(e){ issuesErr=e.message; });
-}
-
 /* ---------- sync ---------- */
 function note(msg,cls){ stateMsg=msg; paintState(cls||""); }
-
 function paintState(cls){
   var d=$("dot"), s=$("stateTxt");
   if(!d||!s) return;
-  d.className = "dot" + (cls==="bad"?" bad":(busy?" busy":(token&&REPO()?" ok":"")));
+  d.className="dot"+(cls==="bad"?" bad":(busy?" busy":(token&&REPO()?" ok":"")));
   var bits=[];
   if(REPO()) bits.push(REPO());
   if(!token) bits.push("no token");
   if(stateMsg) bits.push(stateMsg);
   else if(lastSync) bits.push("synced "+hm(new Date(lastSync).getHours()*60+new Date(lastSync).getMinutes()));
   if(queue.length) bits.push(queue.length+" queued");
-  s.textContent = bits.join(" · ") || "Not connected";
+  s.textContent=bits.join(" · ") || "Not connected";
 }
-
 function sync(){
   if(!token || !REPO()){ note("Open settings and connect"); render(); return Promise.resolve(); }
   busy=true; note("Syncing…");
   return flushQueue()
-    .then(pullBoard).then(pullLog).then(loadIssues)
+    .then(pullBoard).then(pullStatus).then(pullPlan).then(pullLog).then(loadIssues)
     .then(function(){ busy=false; lastSync=Date.now(); stateMsg=""; render(); })
     .catch(function(e){ busy=false; note(e.message,"bad"); render(); });
 }
 
-/* ---------- time ---------- */
+/* ---------- the week ---------- */
 function curBlock(){
   var t=nowMin(), r=board.week[new Date().getDay()]||[];
   for(var i=0;i<r.length;i++) if(r[i][5]>r[i][4] && t>=r[i][4] && t<r[i][5]) return {b:r[i],i:i};
@@ -171,15 +242,8 @@ function nextBlock(){
   for(var i=0;i<r.length;i++) if(r[i][5]>r[i][4] && r[i][4]>t) return r[i];
   return null;
 }
-function suggested(){
-  for(var i=0;i<board.threads.length;i++){ var x=board.threads[i]; if(x.tag==="Phase 1" && x.at<2) return x; }
-  return board.threads[0]||null;
-}
-function liveMins(id){ return (mins[id]||0) + (isOn(id) ? (Date.now()-running[id])/60000 : 0); }
-function weekMins(){ var s=0; for(var k in mins) if(mins.hasOwnProperty(k)) s+=mins[k];
-  runIds().forEach(function(id){ s+=(Date.now()-running[id])/60000; }); return s; }
 
-/* ---------- timers ---------- */
+/* ---------- actions ---------- */
 function start(id){
   if(isOn(id)) return;
   running[id]=Date.now(); put(K.running,running); render();
@@ -192,373 +256,773 @@ function stop(id){
     mins[id]=(mins[id]||0)+m; put(K.mins,mins);
     queue.push({kind:"log", line:JSON.stringify({thread:id, start:new Date(at).toISOString(),
       end:new Date().toISOString(), minutes:m})});
-    put(K.queue,queue);
-    render();
-    flushQueue().then(function(){ return pullLog(); }).then(render).catch(function(){ render(); });
+    put(K.queue,queue); render();
+    flushQueue().then(pullLog).then(render).catch(function(){ render(); });
     return;
   }
   render();
 }
+function setStage(t, ix){
+  var line=JSON.stringify({thread:t.id, stage:ix, label:(t.st||[])[ix]||"", at:new Date().toISOString()});
+  statuses[t.id]={thread:t.id, stage:ix, label:(t.st||[])[ix]||"", at:new Date().toISOString()};
+  queue.push({kind:"status", line:line});
+  queue.push({kind:"issue", title:"Update: "+t.n,
+    body:"Stage set to **"+((t.st||[])[ix]||ix)+"**.\n\n---\nThread: `"+t.id+"` — "+t.n+
+         "\nSent from the Planner desktop, "+new Date().toISOString()+"."});
+  put(K.queue,queue); note("Saving stage…"); render();
+  flushQueue().then(loadIssues).then(function(){ stateMsg="Stage saved."; render(); })
+    .catch(function(e){ note(e.message,"bad"); });
+}
+function comment(t, kind, text){
+  var body=text+"\n\n---\nThread: `"+t.id+"` — "+t.n+
+           "\nSent from the Planner desktop, "+new Date().toISOString()+".";
+  queue.push({kind:"issue", title:kind+": "+t.n, body:body});
+  put(K.queue,queue); note("Sending…"); render();
+  return flushQueue().then(loadIssues).then(function(){ stateMsg="Sent."; render(); })
+    .catch(function(e){ note(e.message,"bad"); });
+}
+function closeIssue(n){
+  return gh("/issues/"+n, {method:"PATCH", body:{state:"closed"}}).then(loadIssues).then(render);
+}
+function openFile(path){
+  file={path:path, text:"", sha:"", orig:"", msg:"Loading…", err:""};
+  selThread=selThread; document.body.classList.add("detail-open"); render();
+  getFile(path).then(function(r){
+    file={path:path, text:r?r.text:"", sha:r?r.sha:"", orig:r?r.text:"",
+          msg:r?"":"New file. It will be created when you save.", err:""};
+    render();
+  }).catch(function(e){ file.msg=""; file.err=e.message; render(); });
+}
+function saveFile(){
+  if(!file) return;
+  var f=file; f.msg="Saving…"; f.err=""; render();
+  putFile(f.path, f.text, f.sha, "Update "+f.path+" from the desktop")
+    .then(function(r){
+      f.sha=(r&&r.content&&r.content.sha)||f.sha; f.orig=f.text; f.msg="Saved."; render();
+    })
+    .catch(function(e){ f.msg=""; f.err=e.message; render(); });
+}
+function headingsOf(text){
+  var out=[], re=/^##\s+(.+)$/gm, m;
+  while((m=re.exec(text))) out.push(m[1].trim());
+  return out;
+}
+function appendUnder(text, heading, line){
+  var lines=text.split("\n"), at=-1, i;
+  for(i=0;i<lines.length;i++) if(/^##\s+/.test(lines[i]) && lines[i].replace(/^##\s+/,"").trim()===heading){ at=i; break; }
+  if(at===-1) return text.replace(/\s*$/,"")+"\n\n## "+heading+"\n\n"+line+"\n";
+  var end=lines.length;
+  for(i=at+1;i<lines.length;i++) if(/^##\s+/.test(lines[i])){ end=i; break; }
+  var body=lines.slice(at+1,end);
+  while(body.length && !body[body.length-1].trim()) body.pop();
+  body.push(line);
+  return lines.slice(0,at+1).concat(body, [""], lines.slice(end)).join("\n");
+}
 
 /* ---------- render ---------- */
 function render(){
-  safe(paintClock); safe(stats); safe(nowCard); safe(threadsCard); safe(weekCard);
-  safe(activityCard); safe(inboxCard); safe(sayCard); safe(goalsCard); safe(openCard);
-  safe(eventsCard); paintState();
+  safe(paintRail); safe(paintList); safe(paintDetail); paintState();
 }
 
-function head(node,title,sub){
-  node.innerHTML="";
-  var h=el("div","ch"); h.appendChild(el("h2",null,title));
-  if(sub) h.appendChild(el("span","sub wrapall",sub));
+function pick(kind,id){
+  sel={kind:kind,id:id||""}; put(K.sel,sel);
+  if(kind==="domain"){ var ts=threadsIn(id); selThread = ts.length?ts[0].id:""; }
+  else selThread="";
+  file=null; document.body.classList.remove("detail-open");
+  render();
+}
+function openThread(id){
+  selThread=id; file=null; document.body.classList.add("detail-open"); render();
+}
+
+/* ---- rail ---- */
+function paintRail(){
+  var r=$("rail"); r.innerHTML="";
+  function item(kind,id,label,colour,count,live){
+    var b=el("button","ri"); b.type="button";
+    b.setAttribute("aria-current", (sel.kind===kind && sel.id===(id||""))?"true":"false");
+    if(colour) b.style.setProperty("--a",cvar(colour));
+    var sw=el("span","sw"); if(!colour) sw.style.background="transparent";
+    b.appendChild(sw);
+    b.appendChild(el("span","nm",label));
+    if(count!=null) b.appendChild(el("span","ct"+(live?" live":""),String(count)));
+    b.addEventListener("click",function(){ pick(kind,id); });
+    r.appendChild(b);
+  }
+  r.appendChild(el("div","railh","Day"));
+  item("today","","Today",null, runIds().length||null, runIds().length>0);
+  item("week","","The week",null,null);
+
+  r.appendChild(el("div","railh","Categories"));
+  domains().forEach(function(d){
+    var ts=threadsIn(d.id);
+    var liveN=ts.filter(function(t){ return isOn(t.id); }).length;
+    item("domain",d.id,d.n,d.c,ts.length,liveN>0);
+  });
+
+  r.appendChild(el("div","railh","Everything else"));
+  item("inbox","","Inbox",null, issues?issues.length:null, issues&&issues.length>0);
+  item("goals","","The year",null,(board.goals||[]).length);
+  item("open","","Waiting on you",null,(board.open||[]).length);
+  item("files","","Files",null,null);
+}
+
+/* ---- list ---- */
+function listHead(node,title,sub){
+  var h=el("div","lh"); h.appendChild(el("h2",null,title));
+  if(sub) h.appendChild(el("span",null,sub));
   node.appendChild(h);
-  return node;
+}
+function threadRow(node,t){
+  var b=el("button","li"+(isOn(t.id)?" on":"")); b.type="button";
+  b.setAttribute("aria-current", selThread===t.id?"true":"false");
+  b.style.setProperty("--a",cvar(t.c||domOf(t).c));
+  var r1=el("div","t1");
+  r1.appendChild(el("span","sw"));
+  r1.appendChild(el("b","wrapall",t.n));
+  var m=liveMins(t.id);
+  r1.appendChild(el("span","rt", isOn(t.id)?dur(m):(m>=1?dur(m):"")));
+  b.appendChild(r1);
+  var bits=[], stage=isUnset(t)?"Stage not set":(stageName(t)+(stagePending(t)?" (pending)":""));
+  bits.push(stage);
+  if(t.tag && t.tag!==stageName(t)) bits.push(t.tag);
+  if(t.why && t.why.indexOf(stageName(t))!==0) bits.push(t.why);
+  b.appendChild(el("div","t2",bits.join(" · ")));
+  b.addEventListener("click",function(){ openThread(t.id); });
+  node.appendChild(b);
 }
 
-function paintClock(){
-  var d=new Date();
-  $("clk").textContent = DAYS[d.getDay()]+" "+hm(d.getHours()*60+d.getMinutes());
+function paintList(){
+  var n=$("list"); n.innerHTML="";
+  if(sel.kind==="domain"){
+    var d=null; domains().forEach(function(x){ if(x.id===sel.id) d=x; });
+    var ts=threadsIn(sel.id);
+    listHead(n, d?d.n:"Threads", ts.length+(domMins(sel.id)>=1?(" · "+dur(domMins(sel.id))+" this week"):""));
+    if(!ts.length){ n.appendChild(el("p","empty","Nothing in this category yet.")); return; }
+    ts.forEach(function(t){ threadRow(n,t); });
+    return;
+  }
+  if(sel.kind==="today")  return listToday(n);
+  if(sel.kind==="week")   return listWeek(n);
+  if(sel.kind==="inbox")  return listInbox(n);
+  if(sel.kind==="goals")  return listGoals(n);
+  if(sel.kind==="open")   return listOpen(n);
+  if(sel.kind==="files")  return listFiles(n);
 }
 
-function stats(){
-  var h=$("stats"); h.innerHTML="";
-  var openN = issues ? issues.length : 0;
-  var oldest = 0;
-  if(issues) issues.forEach(function(i){ oldest=Math.max(oldest, days(i.created_at)); });
-  var papers=null;
-  (board.goals||[]).forEach(function(g){ if(g.id==="papers") papers=g; });
-  var cards=[
-    { n:String(openN), u:"", lb:"Open issues",
-      i: openN ? ("Oldest "+oldest+" day"+(oldest===1?"":"s")+" old") : "Nothing owed" },
-    { n:dur(weekMins()).replace(/m$/,"m"), u:"", lb:"Logged, 7 days",
-      i: runIds().length ? (runIds().length+" running now") : "Nothing running" },
-    { n: papers?String(papers.now):"—", u: papers?("/ "+papers.target):"", lb:"Papers submitted",
-      i: papers?(papers.why||papers.n):"No goal in the board" },
-    { n: board.updated?String(days(board.updated)):"—", u: board.updated?(days(board.updated)===1?"day":"days"):"", lb:"Board age",
-      i: board.updated?("Last written "+board.updated):"Never synced" }
-  ];
-  cards.forEach(function(c){
-    var d=el("div","stat");
-    var b=el("b"); b.appendChild(document.createTextNode(c.n));
-    if(c.u){ var u=el("u",null," "+c.u); b.appendChild(u); }
-    d.appendChild(b); d.appendChild(el("span",null,c.lb)); d.appendChild(el("i","wrapall",c.i));
-    h.appendChild(d);
-  });
-}
-
-function nowCard(){
-  var c=head($("nowCard"),"Right now", board.headline?"":"No board yet");
+function listToday(n){
+  listHead(n, FULL[new Date().getDay()], hm(nowMin()));
   var cur=curBlock(), nx=nextBlock(), t=nowMin();
-  var wrap=el("div","hero");
-  var title, sub, left, col;
-  if(cur){
-    col = "var("+(cur.b[3]||"--neutral")+")";
-    title=cur.b[1]; sub=cur.b[2]||""; left=dur(cur.b[5]-t)+" left";
-    if(cur.b[6] && runIds().length){
-      var t0=T(runIds()[0]);
-      if(t0){ col=colour(t0); title=t0.n; sub="Running for "+dur((Date.now()-running[t0.id])/60000)+"."; }
-    } else if(cur.b[6]){
-      var s=suggested();
-      if(s) sub="Nothing started. Suggested: "+s.n+".";
-    }
-  } else {
-    col="var(--neutral)"; title="Off the clock"; sub="Nothing is scheduled against this hour.";
-    left = nx ? (dur(nx[4]-t)+" until next") : "Nothing else today";
-  }
-  wrap.style.setProperty("--a", col);
-  var lf=el("span","left num",left); wrap.appendChild(lf);
-  wrap.appendChild(el("span","lb", runIds().length?"Working on":(cur?"In this block":"Nothing scheduled")));
-  wrap.appendChild(el("span","big wrapall",title));
-  wrap.appendChild(el("span","sb wrapall",sub));
-  c.appendChild(wrap);
-  var n=el("div","nxt"); n.appendChild(el("b",null,"Next"));
-  n.appendChild(el("span","wrapall", nx ? (hm(nx[4])+"  "+nx[1]) : "Nothing else today."));
-  c.appendChild(n);
-  if(board.headline){
-    var hl=el("p","note wrapall",board.headline); c.appendChild(hl);
-  }
-}
+  var now=el("div","now");
+  now.style.setProperty("--a", cur?cvar(cur.b[3]):"var(--neutral)");
+  now.appendChild(el("span","lb", cur?"In this block":"Off the clock"));
+  now.appendChild(el("span","bg wrapall", cur?cur.b[1]:"Nothing scheduled"));
+  var assigned = cur ? planned(today(), cur.i) : "";
+  var at = assigned ? T(assigned) : null;
+  now.appendChild(el("span","sb wrapall",
+    (cur ? (dur(cur.b[5]-t)+" left. "+(at?("Assigned: "+at.n+"."):(cur.b[6]?"Nothing assigned to this block.":(cur.b[2]||""))))
+         : (nx?("Next at "+hm(nx[4])+", "+nx[1]):"Nothing else today."))));
+  n.appendChild(now);
 
-function threadsCard(){
-  var c=head($("threadsCard"),"Threads", board.threads.length?(board.threads.length+" tracked"):"");
-  if(!board.threads.length){ c.appendChild(el("p","empty","No board loaded yet.")); return; }
-  var rows=el("div","rows");
-  board.threads.forEach(function(t){
-    var st=t.st||[], pct = st.length>1 ? Math.round(t.at/(st.length-1)*100) : 0;
-    var r=el("div","row"); r.style.setProperty("--a",colour(t));
-    var bd=el("div","bd");
-    var top=el("div"); top.style.cssText="display:flex;gap:10px;justify-content:space-between;align-items:baseline";
-    top.appendChild(el("span","nm wrapall",t.n));
-    top.appendChild(el("span","tag",t.tag||""));
-    bd.appendChild(top);
-    bd.appendChild(el("div","mt wrapall", (st[t.at]||"")+(t.why?(" · "+t.why):"")));
-    var bar=el("div","bar"); var fill=el("i"); fill.style.width=Math.max(pct,4)+"%"; bar.appendChild(fill);
-    bd.appendChild(bar);
-    var rt=el("div","rt");
-    var m=liveMins(t.id);
-    rt.appendChild(el("div","num", m>=1?dur(m):"—"));
-    rt.appendChild(el("div",null,"7 days"));
-    var btn=el("button","go"+(isOn(t.id)?" on":""), isOn(t.id)?"Stop":"Start");
-    btn.addEventListener("click",function(){ isOn(t.id)?stop(t.id):start(t.id); });
-    r.appendChild(bd); r.appendChild(rt); r.appendChild(btn);
-    rows.appendChild(r);
+  var wk=0; for(var k in mins) if(mins.hasOwnProperty(k)) wk+=mins[k];
+  runIds().forEach(function(id){ wk+=(Date.now()-running[id])/60000; });
+  var mini=el("div","mini");
+  function mc(v,l){ var c=el("div","mc"); c.appendChild(el("b",null,v)); c.appendChild(el("span",null,l)); mini.appendChild(c); }
+  mc(String(runIds().length),"running now");
+  mc(dur(wk),"logged, 7 days");
+  mc(String(issues?issues.length:0),"open issues");
+  mc(board.updated?String(daysSince(board.updated)):"—","days since board");
+  n.appendChild(mini);
+
+  if(runIds().length){
+    n.appendChild(el("div","railh","Running"));
+    runIds().forEach(function(id){ var x=T(id); if(x) threadRow(n,x); });
+  }
+  n.appendChild(el("div","railh","Today's blocks"));
+  var tl=el("div","tl");
+  (board.week[new Date().getDay()]||[]).forEach(function(b,ix){
+    var marker=b[5]<=b[4];
+    var k=el("div","tb"+((cur&&cur.i===ix&&!marker)?" now":""));
+    k.style.setProperty("--a",cvar(b[3]));
+    k.appendChild(el("span","tm",b[0]));
+    var bb=el("span","bb"); bb.appendChild(el("b","wrapall",b[1]));
+    if(b[2]) bb.appendChild(el("i","wrapall",b[2]));
+    k.appendChild(bb); tl.appendChild(k);
   });
-  c.appendChild(rows);
+  n.appendChild(tl);
+
+  var crit=board.threads.filter(function(x){ return x.critical; });
+  if(crit.length){
+    n.appendChild(el("div","railh","Phase 1, the four"));
+    crit.forEach(function(x){ threadRow(n,x); });
+  }
 }
 
-function weekCard(){
-  var today=new Date().getDay(), cur=curBlock();
-  var c=head($("weekCard"),"The week", FULL[today]+", today");
-  var g=el("div","wk");
-  for(var d=0; d<7; d++){
+function listWeek(n){
+  listHead(n,"The week", FULL[new Date().getDay()]+", today");
+  var td=new Date().getDay(), cur=curBlock();
+  var g=el("div","wkgrid");
+  for(var d=0;d<7;d++){
     var col=el("div","dcol");
-    var hd=el("div","dh"+(d===today?" today":""),DAYS[d]);
-    col.appendChild(hd);
+    col.appendChild(el("div","dhh"+(d===td?" today":""),DAYS[d]));
     (board.week[d]||[]).forEach(function(b,ix){
-      var isMarker = b[5]<=b[4];
-      var k=el("div","blk"+((d===today&&cur&&cur.i===ix&&!isMarker)?" now":""));
-      k.style.setProperty("--a","var("+(b[3]||"--neutral")+")");
-      k.appendChild(el("b","wrapall",b[1]));
-      k.appendChild(el("i","wrapall",b[0]));
-      col.appendChild(k);
+      var marker=b[5]<=b[4];
+      var k=el("div","tb"+((d===td&&cur&&cur.i===ix&&!marker)?" now":""));
+      k.style.setProperty("--a",cvar(b[3]));
+      var bb=el("span","bb"); bb.appendChild(el("b","wrapall",b[1]));
+      bb.appendChild(el("i","wrapall",b[0]));
+      k.appendChild(bb); col.appendChild(k);
     });
-    if(!(board.week[d]||[]).length) col.appendChild(el("div","blk", "—"));
     g.appendChild(col);
   }
-  c.appendChild(g);
+  n.appendChild(g);
 }
 
-function activityCard(){
-  var c=head($("activityCard"),"Recent sessions", recent.length?"":"Nothing logged");
-  if(!recent.length){ c.appendChild(el("p","empty","No sessions in the log yet. Start a thread above and the log fills.")); return; }
-  var rows=el("div","rows");
-  recent.forEach(function(o){
-    var t=T(o.thread);
-    var r=el("div","row"); r.style.setProperty("--a", t?colour(t):"var(--neutral)");
-    var bd=el("div","bd");
-    bd.appendChild(el("div","nm wrapall", t?t.n:o.thread));
-    bd.appendChild(el("div","mt num", new Date(o.start).toLocaleString(undefined,
-      {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})));
-    var rt=el("div","rt num",dur(o.minutes));
-    r.appendChild(bd); r.appendChild(rt);
-    rows.appendChild(r);
-  });
-  c.appendChild(rows);
-}
-
-function inboxCard(){
-  var c=head($("inboxCard"),"Inbox", issues?(issues.length+" open"):"");
-  if(issuesErr){ c.appendChild(el("p","note bad wrapall",issuesErr)); return; }
-  if(!issues){ c.appendChild(el("p","empty","Not loaded yet.")); return; }
-  if(!issues.length){ c.appendChild(el("p","empty","Nothing open. Everything you sent has been acted on and closed.")); return; }
+function listInbox(n){
+  listHead(n,"Inbox", issues?(issues.length+" open"):"");
+  if(issuesErr){ n.appendChild(el("p","note bad wrapall",issuesErr)); return; }
+  if(!issues){ n.appendChild(el("p","empty","Not loaded yet.")); return; }
+  if(!issues.length){ n.appendChild(el("p","empty","Nothing open. Everything you sent has been acted on and closed.")); return; }
   issues.forEach(function(is){
-    var d=el("div","issue");
-    var hd=el("div","hd");
-    hd.appendChild(el("b","wrapall",is.title));
-    hd.appendChild(el("span",null,"#"+is.number+" · "+ago(is.created_at)));
-    d.appendChild(hd);
-    var p=el("p","wrapall"+(openIssue===is.number?" open":""), is.body||"");
-    d.appendChild(p);
-    var acts=el("div","acts");
-    if((is.body||"").length>240){
-      var more=el("button","mini", openIssue===is.number?"Less":"Read all");
-      more.addEventListener("click",function(){ openIssue = openIssue===is.number?null:is.number; safe(inboxCard); });
-      acts.appendChild(more);
-    }
-    if(is.comments){ acts.appendChild(el("span","mini", is.comments+" repl"+(is.comments===1?"y":"ies"))); }
-    var opn=el("button","mini","Open on GitHub");
-    opn.addEventListener("click",function(){ window.open(is.html_url,"_blank","noopener"); });
-    acts.appendChild(opn);
-    var cl=el("button","mini warn","Close");
-    cl.addEventListener("click",function(){
-      cl.textContent="Closing…";
-      gh("/issues/"+is.number,{method:"PATCH",body:{state:"closed"}})
-        .then(function(){ return loadIssues(); })
-        .then(function(){ render(); })
-        .catch(function(e){ note(e.message,"bad"); cl.textContent="Close"; });
-    });
-    acts.appendChild(cl);
-    d.appendChild(acts);
-    c.appendChild(d);
+    var b=el("button","li"); b.type="button";
+    var r1=el("div","t1");
+    r1.appendChild(el("span","sw"));
+    r1.appendChild(el("b","wrapall",is.title));
+    r1.appendChild(el("span","rt","#"+is.number));
+    b.appendChild(r1);
+    b.appendChild(el("div","t2", ago(is.created_at)+" · "+(is.body||"").replace(/\s+/g," ").slice(0,90)));
+    b.addEventListener("click",function(){ sel={kind:"inbox",id:String(is.number)}; put(K.sel,sel);
+      document.body.classList.add("detail-open"); render(); });
+    n.appendChild(b);
   });
 }
 
-function sayCard(){
-  var c=head($("sayCard"),"Say","becomes an issue");
-  var f0=el("div","fld");
-  f0.appendChild(el("label",null,"Thread"));
-  var sel=document.createElement("select"); sel.id="sayth";
-  var o0=document.createElement("option"); o0.value=""; o0.textContent="No thread"; sel.appendChild(o0);
-  board.threads.forEach(function(t){
-    var o=document.createElement("option"); o.value=t.id; o.textContent=t.n; sel.appendChild(o);
+function listGoals(n){
+  listHead(n,"The year", (board.goals||[]).length+" goals");
+  (board.goals||[]).forEach(function(g){
+    var b=el("button","li"); b.type="button"; b.style.setProperty("--a",cvar(g.c));
+    var r1=el("div","t1");
+    r1.appendChild(el("span","sw"));
+    r1.appendChild(el("b","wrapall",g.n));
+    r1.appendChild(el("span","rt",(g.now||0)+" / "+(g.target||0)));
+    b.appendChild(r1);
+    b.appendChild(el("div","t2",g.why||""));
+    n.appendChild(b);
   });
-  f0.appendChild(sel); c.appendChild(f0);
+  if(board.apex){ n.appendChild(el("p","note wrapall",board.apex)); }
+  n.appendChild(el("div","railh","Coming up"));
+  (board.events||[]).forEach(function(e){
+    var b=el("div","li");
+    var r1=el("div","t1"); r1.appendChild(el("span","sw"));
+    r1.appendChild(el("b","wrapall",e.n)); r1.appendChild(el("span","rt",e.date||""));
+    b.appendChild(r1);
+    b.appendChild(el("div","t2",[e.start&&(e.start+(e.end?("–"+e.end):"")),e.where,e.note].filter(Boolean).join(" · ")));
+    n.appendChild(b);
+  });
+}
 
-  var f1=el("div","fld");
-  f1.appendChild(el("label",null,"Kind"));
-  var kind=document.createElement("select"); kind.id="saykind";
-  ["Update","Decision","New thread","Ask"].forEach(function(k){
+function listOpen(n){
+  var q=board.open||[];
+  listHead(n,"Waiting on you", q.length?(q.length+" questions"):"nothing");
+  if(!q.length){ n.appendChild(el("p","empty","Nothing is waiting on a decision.")); return; }
+  q.forEach(function(x,i){
+    var b=el("button","li"); b.type="button";
+    var r1=el("div","t1"); r1.appendChild(el("span","sw"));
+    r1.appendChild(el("b","wrapall",x)); r1.appendChild(el("span","rt",String(i+1)));
+    b.appendChild(r1);
+    b.appendChild(el("div","t2","Answer it and it becomes a decision"));
+    b.addEventListener("click",function(){ sel={kind:"open",id:String(i)}; put(K.sel,sel);
+      document.body.classList.add("detail-open"); render(); });
+    n.appendChild(b);
+  });
+}
+
+function listFiles(n){
+  listHead(n,"Files","open anything in the repository");
+  var seen={}, groups=[];
+  board.threads.forEach(function(t){
+    (t.files||[]).forEach(function(p){
+      if(seen[p]) return; seen[p]=1;
+      groups.push({p:p, t:t});
+    });
+  });
+  ["NOW.md","data/board.json","docs/plan.md","docs/week.md","docs/decisions.md","patents/README.md"].forEach(function(p){
+    if(!seen[p]){ seen[p]=1; groups.push({p:p, t:null}); }
+  });
+  groups.forEach(function(g){
+    var b=el("button","li"); b.type="button";
+    if(g.t) b.style.setProperty("--a",cvar(g.t.c));
+    var r1=el("div","t1"); r1.appendChild(el("span","sw"));
+    r1.appendChild(el("b","wrapall",g.p.split("/").pop()));
+    b.appendChild(r1);
+    b.appendChild(el("div","t2",g.p));
+    b.addEventListener("click",function(){ if(g.t) selThread=g.t.id; openFile(g.p); });
+    n.appendChild(b);
+  });
+  var add=el("div"); add.style.marginTop="12px";
+  var inp=document.createElement("input"); inp.type="text"; inp.placeholder="any path, for example teaching/ct-techniques.md";
+  add.appendChild(inp);
+  var go=el("button","btn","Open path"); go.style.marginTop="8px";
+  go.addEventListener("click",function(){ var v=inp.value.trim(); if(v) openFile(v); });
+  add.appendChild(go);
+  n.appendChild(add);
+}
+
+/* ---- detail ---- */
+function backBtn(d){
+  var b=el("button","back","‹ Back");
+  b.addEventListener("click",function(){ file=null; document.body.classList.remove("detail-open"); render(); });
+  d.appendChild(b);
+}
+
+function paintDetail(){
+  var d=$("detail"); d.innerHTML="";
+  if(file) return detailFile(d);
+  if(sel.kind==="inbox" && sel.id) return detailIssue(d, Number(sel.id));
+  if(sel.kind==="open" && sel.id!=="") return detailQuestion(d, Number(sel.id));
+  var t=selThread?T(selThread):null;
+  if(!t){
+    if(sel.kind==="today") return detailToday(d);
+    backBtn(d);
+    d.appendChild(el("h2",null,"Nothing selected"));
+    d.appendChild(el("p","empty","Pick a category on the left, then a thread. Everything about it opens here: stage, timer, files, comments. Press \u2318K to jump straight to one."));
+    return;
+  }
+  detailThread(d,t);
+}
+
+function detailToday(d){
+  var dt=today(), dayIx=new Date().getDay(), blocks=board.week[dayIx]||[], cur=curBlock();
+  d.appendChild(el("h2",null,"The plan for "+FULL[dayIx]));
+  if(board.headline) d.appendChild(el("p","kv wrapall",board.headline));
+
+  var s1=el("div","sec"); s1.appendChild(el("h3",null,"One thread per block"));
+  s1.appendChild(el("p","note","Each working block holds exactly one thread. A thread with no block is not active, whatever state it is in. Assign them here and the hours become attributable."));
+  var any=false;
+  blocks.forEach(function(b,ix){
+    if(b[5]<=b[4] || !b[6]) return;   // markers and non-working blocks are not assignable
+    any=true;
+    var row=el("div","tb"+((cur&&cur.i===ix)?" now":""));
+    row.style.setProperty("--a",cvar(b[3]));
+    row.style.alignItems="center";
+    row.appendChild(el("span","tm",b[0]));
+    var bb=el("span","bb");
+    bb.appendChild(el("b","wrapall",b[1]));
+    var who=planned(dt,ix);
+    var selx=document.createElement("select");
+    var o0=document.createElement("option"); o0.value=""; o0.textContent="Not assigned"; selx.appendChild(o0);
+    domains().forEach(function(dm){
+      var g=document.createElement("optgroup"); g.label=dm.n;
+      threadsIn(dm.id).forEach(function(th){
+        var o=document.createElement("option"); o.value=th.id; o.textContent=th.n;
+        if(th.id===who) o.selected=true;
+        g.appendChild(o);
+      });
+      if(g.childNodes.length) selx.appendChild(g);
+    });
+    selx.style.marginTop="6px";
+    selx.addEventListener("change",function(){ assign(dt,ix,selx.value); });
+    bb.appendChild(selx);
+    row.appendChild(bb);
+    if(who){
+      var th=T(who);
+      var go=el("button","btn "+(isOn(who)?"stop":"pri"), isOn(who)?"Stop":"Start");
+      go.style.flex="none";
+      go.addEventListener("click",function(){ isOn(who)?stop(who):start(who); });
+      row.appendChild(go);
+      var opn=el("button","btn","Open");
+      opn.style.flex="none";
+      opn.addEventListener("click",function(){ if(th){ sel={kind:"domain",id:th.dom}; put(K.sel,sel); openThread(th.id); } });
+      row.appendChild(opn);
+    }
+    s1.appendChild(row);
+  });
+  if(!any) s1.appendChild(el("p","empty","No working block today. Nothing to assign."));
+  d.appendChild(s1);
+
+  var unplanned=board.threads.filter(function(t){ return t.critical; }).filter(function(t){
+    var got=false; blocks.forEach(function(b,ix){ if(planned(dt,ix)===t.id) got=true; });
+    return !got;
+  });
+  if(unplanned.length){
+    var s2=el("div","sec"); s2.appendChild(el("h3",null,"Phase 1, not on today"));
+    unplanned.forEach(function(t){
+      var r=el("div","file");
+      r.appendChild(el("span","p wrapall",t.n));
+      var b=el("button","pill","open");
+      b.addEventListener("click",function(){ sel={kind:"domain",id:t.dom}; put(K.sel,sel); openThread(t.id); });
+      r.appendChild(b);
+      s2.appendChild(r);
+    });
+    d.appendChild(s2);
+  }
+
+  var q=board.open||[];
+  if(q.length){
+    var s3=el("div","sec"); s3.appendChild(el("h3",null,"Waiting on you, "+q.length));
+    q.slice(0,3).forEach(function(x,i){
+      var r=el("div","file");
+      r.appendChild(el("span","p wrapall",x));
+      var b=el("button","pill","answer");
+      b.addEventListener("click",function(){ sel={kind:"open",id:String(i)}; put(K.sel,sel);
+        document.body.classList.add("detail-open"); render(); });
+      r.appendChild(b);
+      s3.appendChild(r);
+    });
+    d.appendChild(s3);
+  }
+}
+
+function detailThread(d,t){
+  backBtn(d);
+  var dom=domOf(t);
+  var h=el("div","dh");
+  h.appendChild(el("h2","wrapall",t.n));
+  d.appendChild(h);
+
+  var meta=el("div","meta");
+  var p1=el("span","pill",dom.n); p1.style.background="transparent";
+  p1.style.boxShadow="inset 0 0 0 1px "+cvar(t.c||dom.c); p1.style.color=cvar(t.c||dom.c);
+  meta.appendChild(p1);
+  if(t.tag) meta.appendChild(el("span","pill",t.tag));
+  if(isUnset(t)) meta.appendChild(el("span","pill unset","stage not set"));
+  else if(stagePending(t)) meta.appendChild(el("span","pill","pending on the board"));
+  if(isOn(t.id)) meta.appendChild(el("span","pill live","running "+dur((Date.now()-running[t.id])/60000)));
+  var m=liveMins(t.id);
+  if(m>=1) meta.appendChild(el("span",null,dur(m)+" in seven days"));
+  if(t.who) meta.appendChild(el("span",null,"with "+t.who));
+  d.appendChild(meta);
+
+  if(t.why) d.appendChild(el("p","kv wrapall",t.why));
+  if(t.next){
+    var nx=el("p","kv wrapall"); nx.appendChild(el("b",null,"Next: "));
+    nx.appendChild(document.createTextNode(t.next)); d.appendChild(nx);
+  }
+
+  // stage
+  var s1=el("div","sec"); s1.appendChild(el("h3",null,"Stage"));
+  var steps=el("div","steps");
+  (t.st||[]).forEach(function(name,ix){
+    var cur=stageIx(t), cls="step"+(ix===cur&&!isUnset(t)?" at":(ix<cur&&!isUnset(t)?" past":""));
+    var b=el("button",cls,name); b.type="button";
+    b.style.setProperty("--a",cvar(t.c||dom.c));
+    b.addEventListener("click",function(){ setStage(t,ix); });
+    steps.appendChild(b);
+  });
+  s1.appendChild(steps);
+  s1.appendChild(el("p","note","One click records it in data/status.jsonl and opens an issue so it gets filed properly."));
+  d.appendChild(s1);
+
+  // timer
+  var s2=el("div","sec"); s2.appendChild(el("h3",null,"Time"));
+  var row=el("div","btnrow");
+  var go=el("button","btn "+(isOn(t.id)?"stop":"pri"), isOn(t.id)?"Stop":"Start working");
+  go.addEventListener("click",function(){ isOn(t.id)?stop(t.id):start(t.id); });
+  row.appendChild(go);
+  if(runIds().length>1){
+    row.appendChild(el("span","note","Two or more threads are running. Each hour is only attributable to one."));
+  }
+  s2.appendChild(row);
+  var rec=recent.filter(function(o){ return o.thread===t.id; }).slice(0,5);
+  if(rec.length){
+    var ul=el("div"); ul.style.marginTop="10px";
+    rec.forEach(function(o){
+      ul.appendChild(el("div","note", new Date(o.start).toLocaleString(undefined,
+        {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})+" · "+dur(o.minutes)));
+    });
+    s2.appendChild(ul);
+  }
+  d.appendChild(s2);
+
+  // files
+  var s3=el("div","sec"); s3.appendChild(el("h3",null,"Files"));
+  if(!(t.files||[]).length){
+    s3.appendChild(el("p","empty","No file is linked to this thread yet. Open any path from the Files list on the left."));
+  } else {
+    var fl=el("div","filelist");
+    (t.files||[]).forEach(function(p){
+      var b=el("button","file"); b.type="button";
+      b.appendChild(el("span","p mono",p));
+      b.appendChild(el("span","pill","open"));
+      b.addEventListener("click",function(){ openFile(p); });
+      fl.appendChild(b);
+    });
+    s3.appendChild(fl);
+  }
+  d.appendChild(s3);
+
+  // comment
+  var s4=el("div","sec"); s4.appendChild(el("h3",null,"Say something about this"));
+  var kind=document.createElement("select");
+  ["Update","Decision","Ask","New thread"].forEach(function(k){
     var o=document.createElement("option"); o.value=k; o.textContent=k; kind.appendChild(o);
   });
-  f1.appendChild(kind); c.appendChild(f1);
-
-  var f2=el("div","fld");
-  f2.appendChild(el("label",null,"What happened"));
-  var ta=document.createElement("textarea"); ta.id="sayta"; ta.placeholder="Type it, or use the keyboard's dictation key.";
-  f2.appendChild(ta); c.appendChild(f2);
-
-  var send=el("button","wide","Send");
+  kind.style.marginBottom="8px"; s4.appendChild(kind);
+  var ta=document.createElement("textarea");
+  ta.placeholder="What happened, what changed, what you decided. Dictation key works here.";
+  s4.appendChild(ta);
+  var br=el("div","btnrow");
+  var send=el("button","btn pri","Send");
   send.addEventListener("click",function(){
-    var v=$("sayta").value.trim(); if(!v) return;
-    var th=$("sayth").value?T($("sayth").value):null;
-    var title=$("saykind").value+(th?(": "+th.n):"");
-    var body=v+"\n\n---\n"+(th?("Thread: `"+th.id+"` — "+th.n+"\n"):"")+
-             "Sent from the Planner desktop, "+new Date().toISOString()+".";
-    queue.push({kind:"issue", title:title, body:body}); put(K.queue,queue);
-    $("sayta").value=""; note("Sending…");
-    flushQueue().then(function(){ return loadIssues(); })
-      .then(function(){ stateMsg = queue.length ? (queue.length+" still queued") : "Sent."; render(); })
+    var v=ta.value.trim(); if(!v) return;
+    ta.value=""; comment(t,kind.value,v);
+  });
+  br.appendChild(send);
+  s4.appendChild(br);
+  d.appendChild(s4);
+
+  // this thread's open issues
+  var mine=issuesFor(t.id);
+  if(mine.length){
+    var s5=el("div","sec"); s5.appendChild(el("h3",null,"Open on this thread"));
+    mine.forEach(function(is){
+      var c=el("div","cmt");
+      var hh=el("div","h");
+      hh.appendChild(el("b","wrapall",is.title));
+      hh.appendChild(el("span",null,"#"+is.number+" · "+ago(is.created_at)));
+      c.appendChild(hh);
+      c.appendChild(el("p","wrapall",(is.body||"").split("\n---\n")[0]));
+      var row2=el("div","btnrow");
+      var op=el("button","btn","Open on GitHub");
+      op.addEventListener("click",function(){ window.open(is.html_url,"_blank","noopener"); });
+      var cl=el("button","btn warn","Close");
+      cl.addEventListener("click",function(){ cl.textContent="Closing…"; closeIssue(is.number).catch(function(e){ note(e.message,"bad"); }); });
+      row2.appendChild(op); row2.appendChild(cl);
+      c.appendChild(row2);
+      s5.appendChild(c);
+    });
+    d.appendChild(s5);
+  }
+}
+
+function detailFile(d){
+  backBtn(d);
+  var f=file;
+  var h=el("div","dh"); h.appendChild(el("h2","wrapall",f.path.split("/").pop()));
+  d.appendChild(h);
+  d.appendChild(el("p","meta mono",f.path));
+
+  if(f.path.indexOf("patents/")===0){
+    d.appendChild(el("p","warnbar","Patent files carry title, status and dates only. The invention itself never goes in here: git history is permanent, and outside the United States novelty is absolute with no grace period."));
+  }
+  if(f.err) d.appendChild(el("p","note bad wrapall",f.err));
+  if(f.msg) d.appendChild(el("p","note",f.msg));
+
+  var hs=headingsOf(f.text||"");
+  if(hs.length){
+    var qa=el("div","sec"); qa.appendChild(el("h3",null,"Add a line"));
+    var selh=document.createElement("select");
+    hs.forEach(function(x){ var o=document.createElement("option"); o.value=x; o.textContent=x; selh.appendChild(o); });
+    selh.style.marginBottom="8px"; qa.appendChild(selh);
+    var qt=document.createElement("textarea");
+    qt.placeholder="One line. It is added under the section you picked, dated today.";
+    qt.style.minHeight="70px";
+    qa.appendChild(qt);
+    var qb=el("div","btnrow");
+    var qgo=el("button","btn","Add and save");
+    qgo.addEventListener("click",function(){
+      var v=qt.value.trim(); if(!v) return;
+      f.text=appendUnder(f.text, selh.value, "- "+today()+" — "+v);
+      qt.value=""; saveFile();
+    });
+    qb.appendChild(qgo); qa.appendChild(qb);
+    d.appendChild(qa);
+  }
+
+  var s=el("div","sec"); s.appendChild(el("h3",null,"The whole file"));
+  var ta=document.createElement("textarea"); ta.className="code"; ta.value=f.text||"";
+  ta.addEventListener("input",function(){ f.text=ta.value; });
+  s.appendChild(ta);
+  var row=el("div","btnrow");
+  var sv=el("button","btn pri","Save to the repository");
+  sv.addEventListener("click",function(){ saveFile(); });
+  var rv=el("button","btn","Revert");
+  rv.addEventListener("click",function(){ f.text=f.orig; render(); });
+  row.appendChild(sv); row.appendChild(rv);
+  s.appendChild(row);
+  d.appendChild(s);
+}
+
+function detailIssue(d,num){
+  backBtn(d);
+  var is=null; (issues||[]).forEach(function(x){ if(x.number===num) is=x; });
+  if(!is){ d.appendChild(el("p","empty","That issue is not in the open list any more.")); return; }
+  d.appendChild(el("h2","wrapall",is.title));
+  d.appendChild(el("p","meta","#"+is.number+" · opened "+ago(is.created_at)+(is.comments?(" · "+is.comments+" repl"+(is.comments===1?"y":"ies")):"")));
+  var p=el("p","kv wrapall"); p.style.whiteSpace="pre-wrap"; p.textContent=is.body||"";
+  d.appendChild(p);
+  var row=el("div","btnrow");
+  var op=el("button","btn","Open on GitHub");
+  op.addEventListener("click",function(){ window.open(is.html_url,"_blank","noopener"); });
+  var cl=el("button","btn warn","Close it");
+  cl.addEventListener("click",function(){ cl.textContent="Closing…";
+    closeIssue(is.number).then(function(){ sel={kind:"inbox",id:""}; put(K.sel,sel); render(); })
+      .catch(function(e){ note(e.message,"bad"); }); });
+  row.appendChild(op); row.appendChild(cl);
+  d.appendChild(row);
+}
+
+function detailQuestion(d,ix){
+  backBtn(d);
+  var q=(board.open||[])[ix];
+  if(!q){ d.appendChild(el("p","empty","No question there.")); return; }
+  d.appendChild(el("h2","wrapall",q));
+  d.appendChild(el("p","meta","Waiting on you"));
+  var s=el("div","sec"); s.appendChild(el("h3",null,"Answer it"));
+  var ta=document.createElement("textarea");
+  ta.placeholder="Your answer. It goes in as a decision and Claude files it.";
+  s.appendChild(ta);
+  var row=el("div","btnrow");
+  var go=el("button","btn pri","Send the decision");
+  go.addEventListener("click",function(){
+    var v=ta.value.trim(); if(!v) return;
+    queue.push({kind:"issue", title:"Decision",
+      body:v+"\n\n---\nAnswering: "+q+"\nSent from the Planner desktop, "+new Date().toISOString()+"."});
+    put(K.queue,queue); ta.value=""; note("Sending…");
+    flushQueue().then(loadIssues).then(function(){ stateMsg="Sent."; render(); })
       .catch(function(e){ note(e.message,"bad"); });
   });
-  c.appendChild(send);
+  row.appendChild(go); s.appendChild(row);
+  d.appendChild(s);
 }
 
-function goalsCard(){
-  var c=head($("goalsCard"),"The year", board.apex?"":"");
-  var gs=board.goals||[];
-  if(!gs.length){ c.appendChild(el("p","empty","No goals in the board.")); return; }
-  var rows=el("div","rows");
-  gs.forEach(function(g){
-    var r=el("div","row"); r.style.setProperty("--a","var("+(g.c||"--accent")+")");
-    var bd=el("div","bd");
-    bd.appendChild(el("div","nm wrapall",g.n));
-    var bar=el("div","bar"); var fill=el("i");
-    var pct = g.target ? Math.min(100,Math.round((g.now||0)/g.target*100)) : 0;
-    fill.style.width=Math.max(pct,3)+"%"; bar.appendChild(fill); bd.appendChild(bar);
-    if(g.why) bd.appendChild(el("div","mt wrapall",g.why));
-    var rt=el("div","rt num",(g.now||0)+" / "+(g.target||0));
-    r.appendChild(bd); r.appendChild(rt);
-    rows.appendChild(r);
+/* ---------- command palette ---------- */
+function openPalette(){
+  palette={q:"", ix:0};
+  drawPalette();
+}
+function paletteItems(){
+  var out=[];
+  board.threads.forEach(function(t){
+    out.push({label:t.n, hint:domOf(t).n, c:t.c||domOf(t).c, run:function(){
+      sel={kind:"domain",id:t.dom}; put(K.sel,sel); openThread(t.id); }});
   });
-  c.appendChild(rows);
-  if(board.apex) c.appendChild(el("p","note wrapall",board.apex));
-}
-
-function openCard(){
-  var q=board.open||[];
-  var c=head($("openCard"),"Waiting on you", q.length?(q.length+""):"nothing");
-  if(!q.length){ c.appendChild(el("p","empty","Nothing is waiting on a decision.")); return; }
-  var ol=el("ol","q");
-  q.forEach(function(x){ ol.appendChild(el("li","wrapall",x)); });
-  c.appendChild(ol);
-}
-
-function eventsCard(){
-  var ev=(board.events||[]).slice().sort(function(a,b){ return (a.date||"")<(b.date||"")?-1:1; });
-  var c=head($("eventsCard"),"Coming up", ev.length?"":"nothing booked");
-  if(!ev.length){ c.appendChild(el("p","empty","No events in the board.")); return; }
-  var rows=el("div","rows");
-  ev.forEach(function(e){
-    var r=el("div","row"); r.style.setProperty("--a","var("+(e.c||"--accent")+")");
-    var bd=el("div","bd");
-    bd.appendChild(el("div","nm wrapall",e.n));
-    var when=[e.date, (e.start?(e.start+(e.end?("–"+e.end):"")):""), e.where].filter(Boolean).join(" · ");
-    bd.appendChild(el("div","mt wrapall",when));
-    if(e.note) bd.appendChild(el("div","mt wrapall",e.note));
-    r.appendChild(bd);
-    rows.appendChild(r);
+  domains().forEach(function(d){
+    out.push({label:d.n, hint:"category", c:d.c, run:function(){ pick("domain",d.id); }});
   });
-  c.appendChild(rows);
+  [["Today","today"],["The week","week"],["Inbox","inbox"],["The year","goals"],
+   ["Waiting on you","open"],["Files","files"]].forEach(function(p){
+    out.push({label:p[0], hint:"view", c:"", run:function(){ pick(p[1],""); }});
+  });
+  board.threads.forEach(function(t){
+    (t.files||[]).forEach(function(p){
+      out.push({label:p, hint:"file", c:t.c, run:function(){ selThread=t.id; openFile(p); }});
+    });
+  });
+  return out;
+}
+function drawPalette(){
+  var h=$("modal");
+  if(!palette){ h.innerHTML=""; return; }
+  var q=palette.q.toLowerCase();
+  var items=paletteItems().filter(function(x){ return !q || x.label.toLowerCase().indexOf(q)!==-1
+    || (x.hint||"").toLowerCase().indexOf(q)!==-1; }).slice(0,40);
+  if(palette.ix>=items.length) palette.ix=Math.max(0,items.length-1);
+  h.innerHTML="";
+  var ov=el("div","modal");
+  ov.addEventListener("click",function(e){ if(e.target===ov){ palette=null; drawPalette(); } });
+  var cd=el("div","cd");
+  var inp=document.createElement("input"); inp.type="text"; inp.id="pq";
+  inp.placeholder="Jump to a thread, a category, a file";
+  inp.value=palette.q; inp.autocomplete="off";
+  inp.addEventListener("input",function(){ palette.q=inp.value; palette.ix=0; drawPalette(); });
+  inp.addEventListener("keydown",function(e){
+    if(e.key==="ArrowDown"){ e.preventDefault(); palette.ix++; drawPalette(); }
+    else if(e.key==="ArrowUp"){ e.preventDefault(); palette.ix=Math.max(0,palette.ix-1); drawPalette(); }
+    else if(e.key==="Enter"){ e.preventDefault(); var it=items[palette.ix]; if(it){ palette=null; h.innerHTML=""; it.run(); } }
+    else if(e.key==="Escape"){ palette=null; drawPalette(); }
+  });
+  cd.appendChild(inp);
+  var box=el("div"); box.style.marginTop="10px";
+  items.forEach(function(it,i){
+    var b=el("button","pl"+(i===palette.ix?" sel":"")); b.type="button";
+    if(it.c) b.style.setProperty("--a",cvar(it.c));
+    var sw=el("span","sw"); if(!it.c) sw.style.background="transparent";
+    b.appendChild(sw);
+    b.appendChild(el("span","nm",it.label));
+    b.appendChild(el("span","hint",it.hint||""));
+    b.addEventListener("click",function(){ palette=null; h.innerHTML=""; it.run(); });
+    box.appendChild(b);
+  });
+  if(!items.length) box.appendChild(el("p","empty","Nothing matches."));
+  cd.appendChild(box);
+  ov.appendChild(cd); h.appendChild(ov);
+  setTimeout(function(){ var e=$("pq"); if(e) e.focus(); },0);
 }
 
 /* ---------- settings ---------- */
-function modal(build){
+function settings(){
   var h=$("modal"); h.innerHTML="";
   var ov=el("div","modal");
   ov.addEventListener("click",function(e){ if(e.target===ov) h.innerHTML=""; });
   var cd=el("div","cd");
-  build(cd,function(){ h.innerHTML=""; });
+  cd.appendChild(el("h3",null,"Settings"));
+
+  cd.appendChild(el("h3",null,"Repository"));
+  var rin=document.createElement("input"); rin.type="text"; rin.value=REPO();
+  rin.placeholder="owner/name"; rin.autocomplete="off"; rin.spellcheck=false;
+  cd.appendChild(rin);
+  cd.appendChild(el("h3",null,"GitHub token"));
+  var tin=document.createElement("input"); tin.type="password";
+  tin.placeholder=token?"Saved. Paste a new one to replace it.":"github_pat_…";
+  tin.autocomplete="off"; tin.spellcheck=false;
+  cd.appendChild(tin);
+  var st=el("p","note",(token&&REPO())?("Connected to "+REPO()+"."):"Not connected.");
+  cd.appendChild(st);
+
+  var row=el("div","btnrow");
+  var save=el("button","btn pri","Save and test");
+  save.addEventListener("click",function(){
+    var rv=rin.value.trim().replace(/^https?:\/\/github\.com\//,"").replace(/\.git$/,"").replace(/\/$/,"");
+    if(rv) putRaw(K.repo,rv);
+    var v=tin.value.trim();
+    if(v){ token=v; put(K.tok,v); tin.value=""; }
+    st.textContent="Testing…"; st.className="note";
+    gh("/issues?per_page=1").then(function(){ return sync(); }).then(function(){
+      st.textContent="Connected. Everything synced."; st.className="note ok";
+    }).catch(function(e){ st.textContent=e.message; st.className="note bad"; });
+  });
+  var out=el("button","btn warn","Forget token");
+  out.addEventListener("click",function(){
+    token=""; del(K.tok); issues=null;
+    st.textContent="Token removed from this browser."; st.className="note"; render();
+  });
+  var done=el("button","btn","Done");
+  done.addEventListener("click",function(){ h.innerHTML=""; });
+  row.appendChild(save); row.appendChild(out); row.appendChild(done);
+  cd.appendChild(row);
+  cd.appendChild(el("p","note","Make the token at github.com, Settings, Developer settings, Personal access tokens, Fine-grained. Give it that one repository, with Contents and Issues set to read and write. Nothing else. It is stored in this browser alone and sent only to api.github.com."));
   ov.appendChild(cd); h.appendChild(ov);
 }
 
-function settings(){
-  modal(function(cd,close){
-    cd.appendChild(el("h3",null,"Settings"));
-
-    var f0=el("div","fld"); f0.appendChild(el("label",null,"Repository"));
-    var rin=document.createElement("input"); rin.type="text"; rin.id="repoin";
-    rin.value=REPO(); rin.placeholder="owner/name"; rin.autocomplete="off"; rin.spellcheck=false;
-    f0.appendChild(rin); cd.appendChild(f0);
-
-    var f=el("div","fld"); f.appendChild(el("label",null,"GitHub token"));
-    var inp=document.createElement("input"); inp.type="password"; inp.id="tokin";
-    inp.placeholder = token?"Saved. Paste a new one to replace it.":"github_pat_…";
-    inp.autocomplete="off"; inp.spellcheck=false;
-    f.appendChild(inp); cd.appendChild(f);
-
-    var st=el("p","note", (token&&REPO())?("Connected to "+REPO()+"."):"Not connected.");
-    st.id="setst"; cd.appendChild(st);
-
-    var duo=el("div","duo");
-    var save=el("button","wide","Save and test");
-    save.addEventListener("click",function(){
-      var rv=$("repoin").value.trim().replace(/^https?:\/\/github\.com\//,"").replace(/\.git$/,"").replace(/\/$/,"");
-      if(rv) putRaw(K.repo,rv);
-      var v=inp.value.trim();
-      if(v){ token=v; put(K.tok,v); inp.value=""; }
-      $("setst").textContent="Testing…"; $("setst").className="note";
-      gh("/issues?per_page=1").then(function(){ return sync(); }).then(function(){
-        $("setst").textContent="Connected. Board synced."; $("setst").className="note ok";
-      }).catch(function(e){
-        $("setst").textContent=e.message; $("setst").className="note bad";
-      });
-    });
-    var out=el("button","wide ghost","Forget token");
-    out.addEventListener("click",function(){
-      token=""; del(K.tok); issues=null;
-      $("setst").textContent="Token removed from this browser."; $("setst").className="note";
-      render();
-    });
-    duo.appendChild(save); duo.appendChild(out); cd.appendChild(duo);
-
-    cd.appendChild(el("p","note","Make the token at github.com, Settings, Developer settings, Personal access tokens, Fine-grained. Give it that one repository, with Contents and Issues set to read and write. Nothing else."));
-    cd.appendChild(el("p","note","It is stored in this browser alone and sent only to api.github.com. A second machine needs its own token, so losing one costs one revoke."));
-
-    var dn=el("button","wide ghost","Done");
-    dn.style.marginTop="10px";
-    dn.addEventListener("click",close);
-    cd.appendChild(dn);
-  });
-}
-
 /* ---------- boot ---------- */
-(function theme(){
-  var t=getRaw(K.theme);
-  if(t) document.documentElement.setAttribute("data-theme",t);
-})();
+(function(){ var t=getRaw(K.theme); if(t) document.documentElement.setAttribute("data-theme",t); })();
 
 $("gear").addEventListener("click",settings);
 $("refresh").addEventListener("click",function(){ sync(); });
+$("palette").addEventListener("click",openPalette);
 $("theme").addEventListener("click",function(){
   var cur=document.documentElement.getAttribute("data-theme");
-  var next = cur==="dark" ? "light" : "dark";
+  var next=cur==="dark"?"light":"dark";
   document.documentElement.setAttribute("data-theme",next); putRaw(K.theme,next);
 });
 document.addEventListener("keydown",function(e){
-  if(e.key==="Escape") $("modal").innerHTML="";
-  if(e.key==="r" && (e.metaKey||e.ctrlKey)===false && e.target===document.body) sync();
+  var typing = e.target && (e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA"||e.target.tagName==="SELECT");
+  if((e.metaKey||e.ctrlKey) && (e.key==="k"||e.key==="K")){ e.preventDefault(); openPalette(); return; }
+  if(e.key==="Escape"){ palette=null; $("modal").innerHTML=""; return; }
+  if(typing) return;
+  if(e.key==="/"){ e.preventDefault(); openPalette(); }
+  if(e.key==="r") sync();
 });
 
 render();
 if(token && REPO()) sync(); else note("Open settings and connect");
 
-setInterval(function(){ safe(paintClock); safe(stats); safe(nowCard); safe(threadsCard); }, 20000);
-setInterval(function(){ if(token&&REPO()&&!busy) sync(); }, 300000);
-window.addEventListener("focus",function(){ if(token&&REPO()&&!busy&&Date.now()-lastSync>60000) sync(); });
+setInterval(function(){ safe(paintRail); if(sel.kind==="today") safe(paintList); }, 20000);
+setInterval(function(){ if(token&&REPO()&&!busy&&!file) sync(); }, 300000);
+window.addEventListener("focus",function(){ if(token&&REPO()&&!busy&&!file&&Date.now()-lastSync>60000) sync(); });
 
 if("serviceWorker" in navigator){
-  window.addEventListener("load",function(){
-    navigator.serviceWorker.register("sw.js").catch(function(){});
-  });
+  window.addEventListener("load",function(){ navigator.serviceWorker.register("sw.js").catch(function(){}); });
 }
 })();
