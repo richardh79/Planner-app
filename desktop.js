@@ -29,7 +29,11 @@ function hm(t){ var h=Math.floor(t/60)%24, m=t%60; return (h<10?"0":"")+h+":"+(m
 function dur(m){ m=Math.max(0,Math.round(m)); var h=Math.floor(m/60); return h?(h+"h "+(m%60)+"m"):(m+"m"); }
 function nowMin(){ var d=new Date(); return d.getHours()*60+d.getMinutes(); }
 function today(){ var d=new Date(); return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2); }
-function daysSince(iso){ return Math.floor((Date.now()-new Date(iso).getTime())/864e5); }
+function daysSince(iso){
+  var d=new Date(iso);
+  if(!iso || isNaN(d.getTime())) return null;
+  return Math.max(0,Math.floor((Date.now()-d.getTime())/864e5));
+}
 function ago(iso){
   var d=(Date.now()-new Date(iso).getTime())/60000;
   if(d<60) return Math.max(1,Math.round(d))+"m ago";
@@ -60,7 +64,9 @@ var ICONS={
   doc:["M7 4h7l4 4v12H7z","M14 4v4h4","M10 13h6","M10 16.5h4"],
   layers:["M12 4 4 8.5 12 13l8-4.5z","M4 14.5 12 19l8-4.5"],
   plus:["M12 6v12","M6 12h12"],
-  check:["M5 12.5 10 17 19 7"]
+  check:["M5 12.5 10 17 19 7"],
+  flag:["M6 21V4.5","M6 5.5h11l-2.2 3.4L17 12.5H6z"],
+  foot:["M8.5 20c-1.5 0-2.5-1-2.5-2.4 0-1.6 1.2-2.6 1.2-4.6 0-1.3-.7-2-.7-3.6C6.5 6.4 8 4 10.4 4c2 0 3.1 1.6 3.1 4 0 3.6-1.7 5-1.7 8.2 0 2.4-1.4 3.8-3.3 3.8z","M16.5 10.5c1.2 0 2 .9 2 2.2 0 1.6-1 2.8-2.3 2.8"]
 };
 function icon(name){
   var d=ICONS[name]; if(!d) return null;
@@ -116,6 +122,15 @@ function stageIx(t){
 function stagePending(t){ var s=statuses[t.id]; return !!(s && s.stage!==t.at); }
 function stageName(t){ return (t.st||[])[stageIx(t)] || ""; }
 function isUnset(t){ return !!t.unset && !statuses[t.id]; }
+function stageCount(t){ return (t.st||[]).length; }
+function finalOf(t){ var st=t.st||[]; return t.final || st[st.length-1] || ""; }
+function walked(t){ var last=stageCount(t)-1; if(last<1) return 0; return Math.round(stageIx(t)/last*100); }
+function connected(){ return !!(token && REPO()); }
+function boardAge(){
+  if(!board.updated) return null;
+  var n=daysSince(board.updated);
+  return (n===null||isNaN(n)) ? null : n;
+}
 function liveMins(id){ return (mins[id]||0) + (isOn(id) ? (Date.now()-running[id])/60000 : 0); }
 function domMins(dom){ var s=0; threadsIn(dom).forEach(function(t){ s+=liveMins(t.id); }); return s; }
 function issuesFor(id){
@@ -250,17 +265,13 @@ function note(msg,cls){ stateMsg=msg; paintState(cls||""); }
 function paintState(cls){
   var d=$("dot"), s=$("stateTxt");
   if(!d||!s) return;
-  d.className="dot"+(cls==="bad"?" bad":(busy?" busy":(token&&REPO()?" ok":"")));
-  var bits=[];
-  if(REPO()) bits.push(REPO());
-  if(!token) bits.push("no token");
-  if(stateMsg) bits.push(stateMsg);
-  else if(lastSync) bits.push("synced "+hm(new Date(lastSync).getHours()*60+new Date(lastSync).getMinutes()));
-  if(queue.length) bits.push(queue.length+" queued");
-  s.textContent=bits.join(" · ") || "Not connected";
+  d.className="dot"+(cls==="bad"?" bad":(busy?" busy":(connected()?" ok":"")));
+  var txt = stateMsg ? ((connected()?REPO()+" · ":"")+stateMsg) : headerWalkText();
+  if(queue.length) txt += " · "+queue.length+" queued";
+  s.textContent=txt; s.title=txt;
 }
 function sync(){
-  if(!token || !REPO()){ note("Open settings and connect"); render(); return Promise.resolve(); }
+  if(!connected()){ stateMsg=""; render(); return Promise.resolve(); }
   busy=true; note("Syncing…");
   return flushQueue()
     .then(pullBoard).then(pullStatus).then(pullPlan).then(pullLog).then(loadIssues)
@@ -356,6 +367,104 @@ function appendUnder(text, heading, line){
   return lines.slice(0,at+1).concat(body, [""], lines.slice(end)).join("\n");
 }
 
+/* ---------- the walk ----------
+   pathHtml, dayPathHtml and headerWalkText build elements rather than markup
+   strings: nothing user-written is ever concatenated into HTML. */
+function pathHtml(t){
+  var wrap=el("div","path"), cur=stageIx(t), unset=isUnset(t);
+  wrap.style.setProperty("--a",cvar(t.c||domOf(t).c));
+  (t.st||[]).forEach(function(name,ix){
+    var cls = unset ? "ahead" : (ix<cur ? "done" : (ix===cur ? "here" : "ahead"));
+    var b=el("button","stone "+cls); b.type="button";
+    b.setAttribute("aria-current",(!unset&&ix===cur)?"step":"false");
+    b.title="Set the stage to "+name;
+    b.appendChild(el("span","bead"));
+    b.appendChild(el("span","st wrapall",name));
+    if(!unset && ix===cur) b.appendChild(el("span","mk","you are here"));
+    if(unset && ix===0) b.appendChild(el("span","mk","not set"));
+    b.addEventListener("click",function(){ setStage(t,ix); });
+    wrap.appendChild(b);
+  });
+  return wrap;
+}
+function finalFlag(t){
+  var w=el("div","final-flag");
+  w.style.setProperty("--a",cvar(t.c||domOf(t).c));
+  var i=icon("flag"); if(i){ i.style.color=cvar(t.c||domOf(t).c); w.appendChild(i); }
+  var fl=el("div","fl");
+  fl.appendChild(el("b","wrapall", finalOf(t) || "No final named"));
+  fl.appendChild(el("span","lab","the final"));
+  w.appendChild(fl);
+  w.appendChild(el("span","go num", isUnset(t) ? "not started"
+    : ((stageIx(t)+1)+" of "+stageCount(t)+" · "+walked(t)+"%")));
+  return w;
+}
+function dayPathHtml(dayIx, dateStr){
+  var blocks=board.week[dayIx]||[];
+  if(!blocks.length) return emptyState("calendar","No blocks on this day. The week file decides them.");
+  var wrap=el("div","daypath"), cur=curBlock(), now=nowMin(), isToday=(dayIx===new Date().getDay());
+  blocks.forEach(function(b,ix){
+    var marker=b[5]<=b[4], work=!!b[6];
+    var who=planned(dateStr,ix), th=who?T(who):null;
+    var isNow=!!(isToday && cur && cur.i===ix && !marker);
+    var past=isToday && !marker && b[5]<=now && !isNow;
+    var cls="dstep"+(marker?" marker":"")+(isNow?" now":"")+(past?" past":"")+
+            ((work&&!th&&!marker)?" hole":"");
+    var s=el("button",cls); s.type="button";
+    s.style.setProperty("--a",cvar(b[3]));
+    s.appendChild(el("span","tm",b[0]));
+    s.appendChild(el("span","ti wrapall",b[1]));
+    if(th) s.appendChild(el("span","th wrapall",(isOn(th.id)?"running · ":"")+th.n));
+    else if(work && !marker) s.appendChild(el("span","th","Unassigned"));
+    else if(b[2]) s.appendChild(el("span","th wrapall",b[2]));
+    s.addEventListener("click",function(){
+      if(th){ sel={kind:"domain",id:th.dom}; put(K.sel,sel); openThread(th.id); return; }
+      sel={kind:"today",id:""}; put(K.sel,sel); selThread=""; file=null;
+      document.body.classList.add("detail-open"); render();
+    });
+    wrap.appendChild(s);
+  });
+  return wrap;
+}
+function headerWalkText(){
+  if(!connected()) return "Not connected · Open settings to start the walk";
+  var d=new Date(), t=nowMin(), cur=curBlock();
+  if(cur){
+    var bits=[FULL[d.getDay()]+" "+hm(t), cur.b[1]];
+    var who=planned(today(),cur.i), th=who?T(who):null;
+    if(th){
+      bits.push(th.n);
+      bits.push(isUnset(th) ? "stage not set"
+        : (stageName(th)+" "+(stageIx(th)+1)+"/"+stageCount(th)));
+    } else if(cur.b[6]) bits.push("no thread on this block");
+    bits.push(dur(Math.max(0,cur.b[5]-t))+" left");
+    return bits.join(" · ");
+  }
+  var nx=nextBlock();
+  return nx ? ("Off the clock · next block "+nx[1]+" at "+hm(nx[4]))
+            : ("Off the clock · nothing else today");
+}
+function startPath(node, leadText){
+  var w=el("div","startpath");
+  w.appendChild(el("p","lead wrapall", leadText));
+  var path=el("div","path");
+  var a=el("div","stone here");
+  a.appendChild(el("span","bead")); a.appendChild(el("span","st","Connect the repository"));
+  a.appendChild(el("span","mk","you are here"));
+  var b=el("div","stone ahead");
+  b.appendChild(el("span","bead")); b.appendChild(el("span","st","Assign this morning's block"));
+  var c=el("div","stone ahead");
+  c.appendChild(el("span","bead")); c.appendChild(el("span","st","Start the timer and walk"));
+  path.appendChild(a); path.appendChild(b); path.appendChild(c);
+  w.appendChild(path);
+  var row=el("div","btnrow");
+  var go=withIcon(el("button","btn pri","Open settings"),"settings");
+  go.addEventListener("click",function(){ settings(); });
+  row.appendChild(go);
+  w.appendChild(row);
+  node.appendChild(w);
+}
+
 /* ---------- render ---------- */
 function render(){
   safe(paintRail); safe(paintList); safe(paintDetail); paintState();
@@ -399,7 +508,7 @@ function paintRail(){
 
   r.appendChild(el("div","railh lab","Everything else"));
   item("inbox","","Inbox",null, issues?issues.length:null, issues&&issues.length>0, "inbox");
-  item("goals","","The year",null,(board.goals||[]).length,false,"target");
+  item("goals","","The map",null,board.threads.length||null,false,"target");
   item("open","","Waiting on you",null,(board.open||[]).length,false,"help");
   item("files","","Files",null,null,false,"folder");
 }
@@ -435,7 +544,7 @@ function paintList(){
     var d=null; domains().forEach(function(x){ if(x.id===sel.id) d=x; });
     var ts=threadsIn(sel.id);
     listHead(n, d?d.n:"Threads", ts.length+(domMins(sel.id)>=1?(" · "+dur(domMins(sel.id))+" this week"):""));
-    if(!ts.length){ n.appendChild(el("p","empty","Nothing in this category yet.")); return; }
+    if(!ts.length){ n.appendChild(emptyState("layers","No path in this category yet.")); return; }
     ts.forEach(function(t){ threadRow(n,t); });
     return;
   }
@@ -448,49 +557,39 @@ function paintList(){
 }
 
 function listToday(n){
-  listHead(n, FULL[new Date().getDay()], hm(nowMin()));
-  var cur=curBlock(), nx=nextBlock(), t=nowMin();
-  var now=el("div","now");
-  now.style.setProperty("--a", cur?cvar(cur.b[3]):"var(--neutral)");
-  now.appendChild(el("span","lb lab", cur?"In this block":"Off the clock"));
-  now.appendChild(el("span","bg wrapall", cur?cur.b[1]:"Nothing scheduled"));
-  var assigned = cur ? planned(today(), cur.i) : "";
-  var at = assigned ? T(assigned) : null;
-  now.appendChild(el("span","sb wrapall",
-    (cur ? (dur(cur.b[5]-t)+" left. "+(at?("Assigned: "+at.n+"."):(cur.b[6]?"Nothing assigned to this block.":(cur.b[2]||""))))
-         : (nx?("Next at "+hm(nx[4])+", "+nx[1]):"Nothing else today."))));
-  n.appendChild(now);
+  var dayIx=new Date().getDay();
+  listHead(n, FULL[dayIx], hm(nowMin()));
+  if(!connected()){
+    startPath(n, "The walk starts when the repository is connected. Three stones from here to working.");
+    return;
+  }
+
+  n.appendChild(el("div","railh lab","The day, morning to night"));
+  n.appendChild(dayPathHtml(dayIx, today()));
 
   var wk=0; for(var k in mins) if(mins.hasOwnProperty(k)) wk+=mins[k];
   runIds().forEach(function(id){ wk+=(Date.now()-running[id])/60000; });
+  var holes=0;
+  (board.week[dayIx]||[]).forEach(function(b,ix){
+    if(b[6] && b[5]>b[4] && !planned(today(),ix)) holes++;
+  });
+  var age=boardAge();
   var mini=el("div","mini");
   function mc(v,l){ var c=el("div","mc"); c.appendChild(el("b","num",v)); c.appendChild(el("span","lab",l)); mini.appendChild(c); }
   mc(String(runIds().length),"running now");
   mc(dur(wk),"logged, 7 days");
-  mc(String(issues?issues.length:0),"open issues");
-  mc(board.updated?String(daysSince(board.updated)):"—","days since board");
+  mc(String(holes),holes===1?"hole today":"holes today");
+  mc(age===null?"—":String(age),"days since board");
   n.appendChild(mini);
 
   if(runIds().length){
-    n.appendChild(el("div","railh lab","Running"));
+    n.appendChild(el("div","railh lab","Walking now"));
     runIds().forEach(function(id){ var x=T(id); if(x) threadRow(n,x); });
   }
-  n.appendChild(el("div","railh lab","Today's blocks"));
-  var tl=el("div","tl");
-  (board.week[new Date().getDay()]||[]).forEach(function(b,ix){
-    var marker=b[5]<=b[4];
-    var k=el("div","tb"+((cur&&cur.i===ix&&!marker)?" now":""));
-    k.style.setProperty("--a",cvar(b[3]));
-    k.appendChild(el("span","tm",b[0]));
-    var bb=el("span","bb"); bb.appendChild(el("b","wrapall",b[1]));
-    if(b[2]) bb.appendChild(el("i","wrapall",b[2]));
-    k.appendChild(bb); tl.appendChild(k);
-  });
-  n.appendChild(tl);
 
   var crit=board.threads.filter(function(x){ return x.critical; });
   if(crit.length){
-    n.appendChild(el("div","railh lab","Phase 1, the four"));
+    n.appendChild(el("div","railh lab","Closest to their final"));
     crit.forEach(function(x){ threadRow(n,x); });
   }
 }
@@ -518,7 +617,7 @@ function listWeek(n){
 function listInbox(n){
   listHead(n,"Inbox", issues?(issues.length+" open"):"");
   if(issuesErr){ n.appendChild(el("p","note bad wrapall",issuesErr)); return; }
-  if(!issues){ n.appendChild(el("p","empty","Not loaded yet.")); return; }
+  if(!issues){ n.appendChild(emptyState("inbox", connected()?"Loading.":"Connect the repository and the inbox fills.")); return; }
   if(!issues.length){ n.appendChild(emptyState("check","Nothing open. Everything you sent has been acted on and closed.")); return; }
   issues.forEach(function(is){
     var b=el("button","li"); b.type="button";
@@ -535,33 +634,84 @@ function listInbox(n){
 }
 
 function listGoals(n){
-  listHead(n,"The year", (board.goals||[]).length+" goals");
+  listHead(n,"The map", board.threads.length+" paths");
+  if(!connected()){
+    startPath(n, "The map draws itself once the board is connected. Every path, where you stand on it, and where it ends.");
+    return;
+  }
+  if(board.apex) n.appendChild(el("p","lead wrapall",board.apex));
+
+  n.appendChild(el("div","railh lab","The year in numbers"));
   (board.goals||[]).forEach(function(g){
-    var b=el("button","li"); b.type="button"; b.style.setProperty("--a",cvar(g.c));
-    var r1=el("div","t1");
-    r1.appendChild(el("span","sw"));
-    r1.appendChild(el("b","wrapall",g.n));
-    r1.appendChild(el("span","rt",(g.now||0)+" / "+(g.target||0)));
-    b.appendChild(r1);
-    b.appendChild(el("div","t2",g.why||""));
+    var b=el("div","track"); b.style.setProperty("--a",cvar(g.c));
+    b.appendChild(el("span","nm wrapall",g.n));
+    var rail=el("span","railpath"); var fill=el("i");
+    var pct=g.target?Math.min(100,Math.round((g.now||0)/g.target*100)):0;
+    fill.style.width=Math.max(pct,2)+"%"; rail.appendChild(fill);
+    b.appendChild(rail);
+    b.appendChild(el("span","dest num",(g.now||0)+" / "+(g.target||0)));
     n.appendChild(b);
   });
-  if(board.apex){ n.appendChild(el("p","note wrapall",board.apex)); }
-  n.appendChild(el("div","railh lab","Coming up"));
-  (board.events||[]).forEach(function(e){
-    var b=el("div","li");
-    var r1=el("div","t1"); r1.appendChild(el("span","sw"));
-    r1.appendChild(el("b","wrapall",e.n)); r1.appendChild(el("span","rt",e.date||""));
-    b.appendChild(r1);
-    b.appendChild(el("div","t2",[e.start&&(e.start+(e.end?("–"+e.end):"")),e.where,e.note].filter(Boolean).join(" · ")));
-    n.appendChild(b);
+
+  var row=el("div","btnrow"); row.style.margin="14px 2px 0";
+  var go=withIcon(el("button","btn","Open the whole map"),"layers");
+  go.addEventListener("click",function(){ selThread=""; file=null;
+    document.body.classList.add("detail-open"); render(); });
+  row.appendChild(go);
+  n.appendChild(row);
+
+  if((board.events||[]).length){
+    n.appendChild(el("div","railh lab","Coming up"));
+    (board.events||[]).forEach(function(e){
+      var b=el("div","li"); b.style.setProperty("--a",cvar(e.c));
+      var r1=el("div","t1"); r1.appendChild(el("span","sw"));
+      r1.appendChild(el("b","wrapall",e.n)); r1.appendChild(el("span","rt",e.date||""));
+      b.appendChild(r1);
+      b.appendChild(el("div","t2",[e.start&&(e.start+(e.end?("\u2013"+e.end):"")),e.where,e.note].filter(Boolean).join(" \u00b7 ")));
+      n.appendChild(b);
+    });
+  }
+}
+
+function detailMap(d){
+  backBtn(d);
+  if(!connected()){
+    d.appendChild(el("h2",null,"The map is empty"));
+    var s0=el("div","sec");
+    startPath(s0, "Connect the repository and every path appears here, with where you stand on it.");
+    d.appendChild(s0);
+    return;
+  }
+  d.appendChild(el("h2",null,"The map"));
+  d.appendChild(el("p","lead wrapall","Every path, how far along it you are, and the final it ends at."));
+  var map=el("div","map"); map.style.marginTop="22px";
+  domains().forEach(function(dm){
+    var ts=threadsIn(dm.id);
+    if(!ts.length) return;
+    var lane=el("div","lane"); lane.style.setProperty("--a",cvar(dm.c));
+    lane.appendChild(el("div","lab",dm.n+" \u00b7 "+ts.length));
+    ts.forEach(function(t){
+      var b=el("button","track"); b.type="button";
+      b.style.setProperty("--a",cvar(t.c||dm.c));
+      b.appendChild(el("span","nm wrapall",t.n));
+      var rail=el("span","railpath"); var fill=el("i");
+      fill.style.width=Math.max(isUnset(t)?0:walked(t),2)+"%";
+      rail.appendChild(fill); b.appendChild(rail);
+      var atEnd=!isUnset(t) && stageIx(t)===stageCount(t)-1;
+      b.appendChild(el("span","dest"+(atEnd?" at":""),
+        atEnd ? finalOf(t) : ((isUnset(t)?"not started ":"")+"\u2192 "+finalOf(t))));
+      b.addEventListener("click",function(){ openThread(t.id); });
+      lane.appendChild(b);
+    });
+    map.appendChild(lane);
   });
+  d.appendChild(map);
 }
 
 function listOpen(n){
   var q=board.open||[];
   listHead(n,"Waiting on you", q.length?(q.length+" questions"):"nothing");
-  if(!q.length){ n.appendChild(el("p","empty","Nothing is waiting on a decision.")); return; }
+  if(!q.length){ n.appendChild(emptyState("check","Nothing is waiting on a decision. The road ahead is yours.")); return; }
   q.forEach(function(x,i){
     var b=el("button","li"); b.type="button";
     var r1=el("div","t1"); r1.appendChild(el("span","sw"));
@@ -620,10 +770,11 @@ function paintDetail(){
   var t=selThread?T(selThread):null;
   if(!t){
     if(sel.kind==="today") return detailToday(d);
+    if(sel.kind==="goals") return detailMap(d);
     backBtn(d);
-    d.appendChild(el("h2",null,"Nothing selected"));
-    d.appendChild(el("div","meta"));
-    d.appendChild(emptyState("layers","Pick a category on the left, then a thread. Stage, timer, files and comments all open here. \u2318K jumps straight to one."));
+    d.appendChild(el("h2",null,"Pick a path"));
+    d.appendChild(el("p","lead wrapall","A category on the left, then a thread. Its stones, its final and its next step all open here."));
+    d.appendChild(emptyState("layers","\u2318K jumps straight to a path, a file or a category."));
     return;
   }
   detailThread(d,t);
@@ -631,11 +782,21 @@ function paintDetail(){
 
 function detailToday(d){
   var dt=today(), dayIx=new Date().getDay(), blocks=board.week[dayIx]||[], cur=curBlock();
+  if(!connected()){
+    d.appendChild(el("h2",null,"The walk has not started"));
+    var s0=el("div","sec");
+    startPath(s0, "Nothing is wrong. This browser simply holds no token yet, so there is no board to walk and no day to assign.");
+    d.appendChild(s0);
+    return;
+  }
   d.appendChild(el("h2",null,"The plan for "+FULL[dayIx]));
-  if(board.headline) d.appendChild(el("p","kv wrapall",board.headline));
+  if(board.headline) d.appendChild(el("p","lead wrapall",board.headline));
+
+  var s0=el("div","sec"); s0.appendChild(el("h3","lab","The day, morning to night"));
+  s0.appendChild(dayPathHtml(dayIx, dt));
+  d.appendChild(s0);
 
   var s1=el("div","sec"); s1.appendChild(el("h3","lab","One thread per block"));
-  s1.appendChild(el("p","note","Each working block holds exactly one thread. A thread with no block is not active, whatever state it is in. Assign them here and the hours become attributable."));
   var any=false;
   blocks.forEach(function(b,ix){
     if(b[5]<=b[4] || !b[6]) return;   // markers and non-working blocks are not assignable
@@ -666,12 +827,19 @@ function detailToday(d){
       var th=T(who);
       var go=el("button","btn "+(isOn(who)?"stop":"pri"), isOn(who)?"Stop":"Start");
       go.style.flex="none";
+      withIcon(go, isOn(who)?"stop":"play");
       go.addEventListener("click",function(){ isOn(who)?stop(who):start(who); });
       row.appendChild(go);
-      var opn=el("button","btn","Open");
+      var opn=el("button","btn sm","Open");
       opn.style.flex="none";
       opn.addEventListener("click",function(){ if(th){ sel={kind:"domain",id:th.dom}; put(K.sel,sel); openThread(th.id); } });
       row.appendChild(opn);
+      var clr=el("button","btn sm warn","Clear");
+      clr.style.flex="none";
+      clr.addEventListener("click",function(){ assign(dt,ix,""); });
+      row.appendChild(clr);
+    } else if(cur && cur.i===ix){
+      row.appendChild(el("span","pill unset","hole in the road"));
     }
     s1.appendChild(row);
   });
@@ -736,24 +904,20 @@ function detailThread(d,t){
   if(t.who) meta.appendChild(el("span",null,"with "+t.who));
   d.appendChild(meta);
 
-  if(t.why) d.appendChild(el("p","kv wrapall",t.why));
-  if(t.next){
-    var nx=el("p","kv wrapall"); nx.appendChild(el("b",null,"Next: "));
-    nx.appendChild(document.createTextNode(t.next)); d.appendChild(nx);
-  }
+  if(t.why) d.appendChild(el("p","lead wrapall",t.why));
 
-  // stage
-  var s1=el("div","sec"); s1.appendChild(el("h3","lab","Stage"));
-  var steps=el("div","steps");
-  (t.st||[]).forEach(function(name,ix){
-    var cur=stageIx(t), cls="step"+(ix===cur&&!isUnset(t)?" at":(ix<cur&&!isUnset(t)?" past":""));
-    var b=el("button",cls,name); b.type="button";
-    b.style.setProperty("--a",cvar(t.c||dom.c));
-    b.addEventListener("click",function(){ setStage(t,ix); });
-    steps.appendChild(b);
-  });
-  s1.appendChild(steps);
-  s1.appendChild(el("p","note","One click records it in data/status.jsonl and opens an issue so it gets filed properly."));
+  // the path: stones are the stage setter
+  var s1=el("div","sec");
+  var h1=el("div","lh");
+  h1.appendChild(el("h3","lab","The path"));
+  h1.appendChild(el("span",null,"click a stone, or [ and ]"));
+  s1.appendChild(h1);
+  s1.appendChild(pathHtml(t));
+  s1.appendChild(finalFlag(t));
+  var ns=el("p","nextstep wrapall");
+  ns.appendChild(el("b","lab","next step"));
+  ns.appendChild(document.createTextNode(t.next || "Not named yet. Say what the next step is and it gets filed."));
+  s1.appendChild(ns);
   d.appendChild(s1);
 
   // timer
@@ -937,18 +1101,29 @@ function openPalette(){
   drawPalette();
 }
 function paletteItems(){
-  var out=[];
+  var out=[], cur=curBlock(), openT=selThread?T(selThread):null;
   board.threads.forEach(function(t){
-    out.push({label:t.n, hint:domOf(t).n, c:t.c||domOf(t).c, run:function(){
+    out.push({label:"The path: "+t.n, hint:domOf(t).n, c:t.c||domOf(t).c, run:function(){
       sel={kind:"domain",id:t.dom}; put(K.sel,sel); openThread(t.id); }});
   });
+  if(openT && !isUnset(openT) && stageIx(openT)<stageCount(openT)-1){
+    out.push({label:"Advance stage of "+openT.n, hint:"stage", c:openT.c||domOf(openT).c,
+      run:function(){ setStage(openT, Math.min(stageCount(openT)-1, stageIx(openT)+1)); }});
+  }
+  if(cur && cur.b[6] && cur.b[5]>cur.b[4]){
+    board.threads.forEach(function(t){
+      out.push({label:"Assign current block to "+t.n, hint:"assign", c:t.c||domOf(t).c,
+        run:function(){ assign(today(), cur.i, t.id); }});
+    });
+  }
   domains().forEach(function(d){
     out.push({label:d.n, hint:"category", c:d.c, run:function(){ pick("domain",d.id); }});
   });
-  [["Today","today"],["The week","week"],["Inbox","inbox"],["The year","goals"],
+  [["Today","today"],["The week","week"],["Inbox","inbox"],["The map","goals"],
    ["Waiting on you","open"],["Files","files"]].forEach(function(p){
     out.push({label:p[0], hint:"view", c:"", run:function(){ pick(p[1],""); }});
   });
+  out.push({label:"Settings", hint:"connection", c:"", run:function(){ settings(); }});
   board.threads.forEach(function(t){
     (t.files||[]).forEach(function(p){
       out.push({label:p, hint:"file", c:t.c, run:function(){ selThread=t.id; openFile(p); }});
@@ -1048,7 +1223,13 @@ $("gear").addEventListener("click",settings);
 $("refresh").addEventListener("click",function(){ sync(); });
 $("palette").addEventListener("click",openPalette);
 $("theme").addEventListener("click",function(){
+  // with no attribute set the page follows the system, so read what is actually on screen
   var cur=document.documentElement.getAttribute("data-theme");
+  if(!cur){
+    var dark=false;
+    try{ dark=window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches; }catch(e){}
+    cur = dark ? "dark" : "light";
+  }
   var next=cur==="dark"?"light":"dark";
   document.documentElement.setAttribute("data-theme",next); putRaw(K.theme,next);
 });
@@ -1059,12 +1240,24 @@ document.addEventListener("keydown",function(e){
   if(typing) return;
   if(e.key==="/"){ e.preventDefault(); openPalette(); }
   if(e.key==="r") sync();
+  if((e.key==="[" || e.key==="]") && !file && selThread){
+    var t=T(selThread);
+    if(t && stageCount(t)){
+      var ix=stageIx(t);
+      var nx=e.key==="]" ? Math.min(stageCount(t)-1, ix+1) : Math.max(0, ix-1);
+      if(nx!==ix || isUnset(t)){ e.preventDefault(); setStage(t,nx); }
+    }
+  }
 });
 
 render();
-if(token && REPO()) sync(); else note("Open settings and connect");
+if(connected()) sync(); else paintState();
 
-setInterval(function(){ safe(paintRail); if(sel.kind==="today") safe(paintList); }, 20000);
+setInterval(function(){
+  paintState();
+  safe(paintRail);
+  if(sel.kind==="today") safe(paintList);
+}, 20000);
 setInterval(function(){ if(token&&REPO()&&!busy&&!file) sync(); }, 300000);
 window.addEventListener("focus",function(){ if(token&&REPO()&&!busy&&!file&&Date.now()-lastSync>60000) sync(); });
 

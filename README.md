@@ -47,10 +47,22 @@ it, a box that turns what you type into an issue, and that thread's open
 issues with a close button. Files open in the same pane: pick a section, add a
 dated line, save, and the commit lands in the repository.
 
-`Today` is the day's plan. Every working block in the week takes exactly one
-thread, chosen from a list, and the choice is written to `data/plan.jsonl`.
-That is the whole point of the view: capacity is rarely the constraint,
-assignment is.
+`Today` is the day's plan, drawn as a trail from morning to night. Every
+working block takes exactly one thread, and a working block with nothing
+assigned is drawn as a hole in the road. The choice is written to
+`data/plan.jsonl`. That is the whole point of the view: capacity is rarely the
+constraint, assignment is.
+
+`The map` is every path at once, grouped by category, each with how far along
+it you are and the final it ends at.
+
+The header carries the walk as one sentence: the day and time, the block you
+are in, the thread on it, the stage you stand on and how long the block has
+left. Off the clock it names the next block instead. Disconnected it says so
+and points at settings.
+
+Keys: `⌘K` or `Ctrl+K` for the palette, `[` and `]` to move a stage back and
+forward while a path is open, `/` for search, `r` to sync.
 
 ⌘K or Ctrl+K opens a command palette over every thread, category and file.
 
@@ -82,6 +94,16 @@ key wins, and nothing is ever rewritten in place.
 Threads may also carry `dom` (which category they belong to), `files` (repo
 paths the detail pane can open), `next`, `who` and `critical`. `domains[]`
 gives each category its name and colour.
+
+**`final`** is optional and names where a path ends: `"Accepted"`, `"Granted"`,
+`"Launched"`. Leave it out and the last entry in `st[]` is used, so no board
+needs migrating. **`next`** is the step under your feet right now, and the
+desktop view shows it directly under the path.
+
+The desktop view reads a thread as a path: `st[]` are the stones, the current
+stage is where you stand, and `final` is the flag at the end. `next` is the
+one step after this one. Nothing about that is stored differently; it is the
+same board read as a walk rather than a table.
 
 ## Files
 
