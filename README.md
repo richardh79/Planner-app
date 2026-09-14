@@ -34,6 +34,24 @@ Offline capable. Writes queue locally and send when the signal returns.
 The token is stored in this browser alone and is sent only to `api.github.com`.
 Nothing else ever sees it. Remove it from the same settings screen.
 
+## The desktop view
+
+`desktop.html` is the same board on a wide screen. Same repository, same token,
+same `data/board.json`; nothing new to install and no second setup beyond
+pasting a token into that browser.
+
+It shows, on one surface: four numbers across the top, the whole week as seven
+columns, where you are right now, every thread with its stage and the time
+logged against it in the last seven days, the recent sessions from the log, the
+open issues with a button to close one, a box that turns what you type into an
+issue, the year's goals, the questions waiting on you, and what is coming up.
+
+Timers start and stop here too, and append to the same `data/log.jsonl`.
+
+Open `<your pages url>/desktop.html`. In Chrome or Edge, the install button in
+the address bar turns it into a desktop app in its own window. The phone app is
+untouched: two manifests, two installs, one set of data.
+
 ## What it expects in your repository
 
 `data/board.json`:
@@ -55,7 +73,9 @@ The app also writes `data/log.jsonl`, one JSON object per tracked session.
 ## Files
 
 `index.html` shell and styling, `app.js` everything else, `sw.js` the service
-worker, `manifest.webmanifest` what makes it installable.
+worker, `manifest.webmanifest` what makes it installable. `desktop.html`,
+`desktop.js` and `desktop.webmanifest` are the wide view and install the same
+way.
 
 **One building block: the band.** Every card, row and block is a `.band` whose
 accent comes from a single `--a` custom property, and its background is mixed

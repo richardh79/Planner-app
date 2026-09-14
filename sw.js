@@ -1,12 +1,15 @@
 /* Planner service worker.
    Shell is cached so the app opens instantly and works with no signal.
    Data is never cached here; it lives in localStorage, written by app.js. */
-var CACHE = "planner-v8";
+var CACHE = "planner-v9";
 var SHELL = [
   "./",
   "./index.html",
   "./app.js?v=8",
+  "./desktop.html",
+  "./desktop.js?v=1",
   "./manifest.webmanifest",
+  "./desktop.webmanifest",
   "./icon-192.png",
   "./icon-512.png"
 ];
@@ -36,7 +39,9 @@ self.addEventListener("fetch", function(e){
       return r;
     }).catch(function(){
       return caches.match(e.request).then(function(m){
-        return m || caches.match("./index.html");
+        if (m) return m;
+        // The desktop page falls back to itself, not to the phone shell.
+        return caches.match(url.indexOf("desktop") !== -1 ? "./desktop.html" : "./index.html");
       });
     })
   );
