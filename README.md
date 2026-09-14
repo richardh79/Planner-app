@@ -34,6 +34,26 @@ Offline capable. Writes queue locally and send when the signal returns.
 The token is stored in this browser alone and is sent only to `api.github.com`.
 Nothing else ever sees it. Remove it from the same settings screen.
 
+## The phone app
+
+`index.html` is the phone. It reads the same board and now walks the same way
+as the desktop view.
+
+- **Work** is categories, collapsed. Tap one to open its paths. Each card shows
+  the stage, where the path ends, and the time logged this week.
+- **The path** opens from any thread: stones for the stages, the one you stand
+  on marked, tap another to move it. The final and the next step sit under it.
+  Setting a stage writes `data/status.jsonl` and opens an issue, exactly as the
+  desktop does, so the two never disagree.
+- **Now** draws the day with the assigned thread on each working block. A
+  working block with nothing on it says so. Tap it and pick a thread from any
+  category, and the choice is written to `data/plan.jsonl`.
+- **Map** adds a lane per category, each path with how far along it is and the
+  destination it ends at.
+- **Files** linked to a thread open from the path, and a dated line can be added
+  under any section from the phone. Patent files carry a warning, the same one
+  the repository carries.
+
 ## The desktop view
 
 `desktop.html` is the same data on a wide screen, built as three panes rather

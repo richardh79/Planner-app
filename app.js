@@ -58,6 +58,9 @@ if(!running){                       // migrate the old single-thread value
   put(K.running, running); del(K.focus);
 }
 function isOn(id){ return Object.prototype.hasOwnProperty.call(running,id); }
+var statuses = {};   // thread id -> {stage, at}, what he has confirmed himself
+var plan = {};       // "YYYY-MM-DD#blockIndex" -> thread id
+var openDom = "";    // which category is expanded in Work
 function runningIds(){ return Object.keys(running); }
 function runCount(){ return runningIds().length; }
 var mins  = get(K.mins, {});
@@ -103,15 +106,68 @@ function pullBoard(){
   });
 }
 
-function appendLog(line){
-  return gh("/contents/data/log.jsonl", {soft404:true}).then(function(r){
+function appendLine(path, line, message){
+  return gh("/contents/"+path, {soft404:true}).then(function(r){
     var body = r&&r.content ? b64d(r.content) : "";
     if(body && body.slice(-1)!=="\n") body += "\n";
-    var next = body + line + "\n";
-    var payload = { message:"Session log", content:b64e(next) };
+    var payload = { message:message||("Update "+path), content:b64e(body+line+"\n") };
     if(r&&r.sha) payload.sha = r.sha;
-    return gh("/contents/data/log.jsonl", {method:"PUT", body:payload});
+    return gh("/contents/"+path, {method:"PUT", body:payload});
   });
+}
+function appendLog(line){ return appendLine("data/log.jsonl", line, "Session log"); }
+
+function getFile(path){
+  return gh("/contents/"+path, {soft404:true}).then(function(r){
+    if(!r||!r.content) return null;
+    return { path:path, text:b64d(r.content), sha:r.sha };
+  });
+}
+function putFile(path, text, sha, message){
+  var body={ message:message||("Update "+path), content:b64e(text) };
+  if(sha) body.sha=sha;
+  return gh("/contents/"+path, {method:"PUT", body:body});
+}
+
+function pullStatus(){
+  return gh("/contents/data/status.jsonl", {soft404:true}).then(function(r){
+    statuses={};
+    if(!r||!r.content) return;
+    b64d(r.content).split("\n").forEach(function(ln){
+      if(!ln.trim()) return;
+      var o=null; try{ o=JSON.parse(ln); }catch(e){ return; }
+      if(o&&o.thread) statuses[o.thread]=o;
+    });
+  });
+}
+function pullPlan(){
+  return gh("/contents/data/plan.jsonl", {soft404:true}).then(function(r){
+    plan={};
+    if(!r||!r.content) return;
+    b64d(r.content).split("\n").forEach(function(ln){
+      if(!ln.trim()) return;
+      var o=null; try{ o=JSON.parse(ln); }catch(e){ return; }
+      if(!o||!o.date||typeof o.block!=="number") return;
+      plan[o.date+"#"+o.block]=o.thread||"";
+    });
+  });
+}
+function planned(dateStr, blockIx){ return plan[dateStr+"#"+blockIx]||""; }
+function dayStr(dayIx){
+  var d=new Date();
+  d.setDate(d.getDate() + (dayIx - d.getDay()));
+  return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2);
+}
+function todayStr(){
+  var d=new Date();
+  return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2);
+}
+function assign(dateStr, blockIx, threadId){
+  plan[dateStr+"#"+blockIx]=threadId;
+  queue.push({kind:"plan", line:JSON.stringify({date:dateStr, block:blockIx, thread:threadId,
+    at:new Date().toISOString()})});
+  put(K.queue,queue); syncMsg="saving the plan"; render();
+  flushQueue().then(function(){ syncMsg = queue.length?"queued, no signal":"plan saved"; render(); });
 }
 
 function pullLog(){
@@ -133,7 +189,9 @@ function pullLog(){
 function flushQueue(){
   if(!token || !queue.length) return Promise.resolve();
   var item = queue[0];
-  var p = item.kind==="log" ? appendLog(item.line)
+  var p = item.kind==="log"    ? appendLog(item.line)
+        : item.kind==="status" ? appendLine("data/status.jsonl", item.line, "Stage set from the phone")
+        : item.kind==="plan"   ? appendLine("data/plan.jsonl", item.line, "Day assigned from the phone")
         : gh("/issues", {method:"POST", body:{title:item.title, body:item.body}});
   return p.then(function(){
     queue.shift(); put(K.queue,queue);
@@ -167,6 +225,37 @@ function suggested(){
     if(x.tag==="Phase 1" && x.at<2) return x;
   }
   return board.threads[0];
+}
+
+function domains(){ return (board.domains&&board.domains.length) ? board.domains : []; }
+function domOf(t){
+  var d=domains();
+  for(var i=0;i<d.length;i++) if(d[i].id===(t&&t.dom)) return d[i];
+  return null;
+}
+function threadsIn(dom){ return board.threads.filter(function(t){ return t.dom===dom; }); }
+function stageCount(t){ return (t.st||[]).length; }
+function stageIx(t){
+  var s=statuses[t.id];
+  if(s && typeof s.stage==="number") return Math.max(0,Math.min(s.stage,stageCount(t)-1));
+  return t.at||0;
+}
+function stageName(t){ return (t.st||[])[stageIx(t)] || ""; }
+function isUnset(t){ return !!t.unset && !statuses[t.id]; }
+function finalOf(t){ var st=t.st||[]; return t.final || st[st.length-1] || ""; }
+function walked(t){ var last=stageCount(t)-1; if(last<1) return 0; return Math.round(stageIx(t)/last*100); }
+function setStage(t, ix){
+  var label=(t.st||[])[ix]||"";
+  statuses[t.id]={thread:t.id, stage:ix, label:label, at:new Date().toISOString()};
+  queue.push({kind:"status", line:JSON.stringify(statuses[t.id])});
+  queue.push({kind:"issue", title:"Update: "+t.n,
+    body:"Stage set to **"+label+"**.\n\n---\nThread: `"+t.id+"` — "+t.n+
+         "\nSent from the Planner app, "+new Date().toISOString()+"."});
+  put(K.queue,queue); syncMsg="saving the stage"; render();
+  flushQueue().then(function(){
+    syncMsg = queue.length ? "queued, no signal" : "stage saved";
+    issues=null; loadIssues(true).then(render);
+  });
 }
 
 function goalOf(t){
@@ -378,13 +467,25 @@ function vNow(m){
       dd.appendChild(b);
     });
     s2.appendChild(dd);
+    var dstr = dayStr(selDay), isToday = (selDay===td);
     (board.week[selDay]||[]).forEach(function(x,ix){
-      var b=band("blk"+((selDay===td&&cur&&cur.i===ix)?" on":""), x[3]);
+      var marker=x[5]<=x[4], work=!!x[6];
+      var who=planned(dstr,ix), th=who?T(who):null;
+      var isNow=isToday&&cur&&cur.i===ix&&!marker;
+      var tappable = work && !marker;
+      var b=band("blk"+(tappable?" walkblk":"")+(isNow?" on":"")+((tappable&&!th)?" hole":""),
+                 th?th.c:x[3], tappable?"button":"div");
       b.appendChild(el("span","t",x[0]));
       var d=el("span","d");
       d.appendChild(el("b","any",x[1]));
-      d.appendChild(el("span","any",x[2]));
+      if(th) d.appendChild(el("span","any"+(isOn(th.id)?" livetxt":""), (isOn(th.id)?"running · ":"")+th.n));
+      else if(tappable) d.appendChild(el("span","any holetxt","Unassigned. Tap to put a thread on it."));
+      else d.appendChild(el("span","any",x[2]||""));
       b.appendChild(d);
+      if(tappable){
+        b.appendChild(el("span","chip"+(th?"":" quiet"), th?"change":"assign"));
+        b.addEventListener("click",function(){ assignSheet(dstr, ix, x); });
+      }
       s2.appendChild(b);
     });
     m.appendChild(s2);
@@ -506,19 +607,48 @@ function vMap(m){
     s.appendChild(c);
   });
 
-  var orphan=board.threads.filter(function(t){ return !goalOf(t); });
-  if(orphan.length){
-    var oc=band("", "--neutral");
-    var oh=el("div","thh");
-    oh.appendChild(el("b",null,"Serving no goal"));
-    oh.appendChild(el("span","chip quiet num",String(orphan.length)));
-    oc.appendChild(oh);
-    oc.appendChild(el("p","note","Work that feeds nothing you said you want. Either it earns a goal or it stops."));
-    var orows=el("div","rows");
-    orphan.forEach(function(t){ orows.appendChild(threadRow(t)); });
-    oc.appendChild(orows); s.appendChild(oc);
-  }
   m.appendChild(s);
+
+  var doms=domains();
+  if(doms.length){
+    var s2=el("div","sec");
+    s2.appendChild(sech("Every path","where it ends"));
+    doms.forEach(function(dm){
+      var ts=threadsIn(dm.id);
+      if(!ts.length) return;
+      var c=band("", dm.c);
+      var hd=el("div","thh");
+      hd.appendChild(el("b",null,dm.n));
+      hd.appendChild(el("span","chip quiet num",String(ts.length)));
+      c.appendChild(hd);
+      ts.forEach(function(t){
+        var b=el("button","track");
+        b.style.setProperty("--a","var("+(t.c||dm.c)+")");
+        b.appendChild(el("span","nm any",t.n));
+        var rail=el("span","railpath"); var fill=el("i");
+        fill.style.width=Math.max(isUnset(t)?0:walked(t),3)+"%";
+        rail.appendChild(fill); b.appendChild(rail);
+        var atEnd=!isUnset(t) && stageIx(t)===stageCount(t)-1;
+        b.appendChild(el("span","dest"+(atEnd?" at":""), atEnd?finalOf(t):("\u2192 "+finalOf(t))));
+        b.addEventListener("click",function(){ openThread(t); });
+        c.appendChild(b);
+      });
+      s2.appendChild(c);
+    });
+    m.appendChild(s2);
+  } else {
+    var orphan=board.threads.filter(function(t){ return !goalOf(t); });
+    if(orphan.length){
+      var oc=band("", "--neutral");
+      var oh=el("div","thh");
+      oh.appendChild(el("b",null,"Serving no goal"));
+      oh.appendChild(el("span","chip quiet num",String(orphan.length)));
+      oc.appendChild(oh);
+      var orows=el("div","rows");
+      orphan.forEach(function(t){ orows.appendChild(threadRow(t)); });
+      oc.appendChild(orows); m.appendChild(oc);
+    }
+  }
 }
 
 function threadRow(t){
@@ -527,7 +657,7 @@ function threadRow(t){
   b.style.setProperty("--a","var("+t.c+")");
   var d=el("span","dot"+(mm?"":" cold")); b.appendChild(d);
   var nm=el("span","nm any"); nm.textContent=t.n;
-  nm.appendChild(el("u",null, t.st[t.at]+(t.critical?" · critical path":"")));
+  nm.appendChild(el("u",null, (isUnset(t)?"stage not set":stageName(t))+(t.critical?" · critical path":"")));
   b.appendChild(nm);
   b.appendChild(el("span","val num"+(on?" live":""), on?"live":(mm?dur(mm):"0m")));
   b.addEventListener("click",function(){ openThread(t); });
@@ -541,33 +671,57 @@ function vThreads(m){
     e.appendChild(el("p","empty","No threads yet. Connect the app in settings and the board loads."));
     m.appendChild(e); return;
   }
+  var doms=domains();
+  if(!doms.length){
+    var w0=el("div"); w0.style.marginTop="2px";
+    board.threads.forEach(function(t){ w0.appendChild(threadCard(t)); });
+    m.appendChild(w0); return;
+  }
   var wrapS=el("div"); wrapS.style.marginTop="2px";
-  board.threads.forEach(function(t){
-    var on=isOn(t.id), mm=liveMins(t), g=goalOf(t);
-    var c=band("", t.c);
-    var hd=el("div","thh");
-    hd.appendChild(el("b","any",t.n));
-    hd.appendChild(el("span","chip"+(on?"":" quiet"), on?"Running":t.tag));
-    c.appendChild(hd);
-    var sg=el("div","stage");
-    t.st.forEach(function(_,ix){ var i=el("i"); if(ix<=t.at) i.className="done"; sg.appendChild(i); });
-    c.appendChild(sg);
-    var f=el("div","thf");
-    f.appendChild(el("span","any", t.st[t.at]+" · "+(g?g.n:"no goal")));
-    f.appendChild(el("em","num", mm?dur(mm):"0m"));
-    c.appendChild(f);
-    var bts=el("div","thb");
-    var go=el("button", on?"go":"", on?"Stop":"Start");
-    go.addEventListener("click",function(e){ e.stopPropagation(); on?stopFocus(t.id):startFocus(t.id); });
-    var sp=el("button",null,"🎙 Say");
-    sp.addEventListener("click",function(e){ e.stopPropagation(); sayThread=t.id; view="say"; render(); });
-    var mo=el("button",null,"Details");
-    mo.addEventListener("click",function(e){ e.stopPropagation(); openThread(t); });
-    bts.appendChild(go); bts.appendChild(sp); bts.appendChild(mo);
-    c.appendChild(bts);
-    wrapS.appendChild(c);
+  doms.forEach(function(dm){
+    var ts=threadsIn(dm.id);
+    if(!ts.length) return;
+    var open = openDom===dm.id;
+    var live = ts.filter(function(t){ return isOn(t.id); }).length;
+    var head=band("cat"+(open?" open":""), dm.c, "button");
+    var hl=el("span","catl");
+    hl.appendChild(el("b",null,dm.n));
+    var doneN=ts.filter(function(t){ return !isUnset(t) && stageIx(t)===stageCount(t)-1; }).length;
+    hl.appendChild(el("span",null, ts.length+" path"+(ts.length===1?"":"s")+
+      (doneN?(" · "+doneN+" at the final"):"")+(live?(" · "+live+" running"):"")));
+    head.appendChild(hl);
+    head.appendChild(el("span","chip"+(live?"":" quiet"), open?"hide":"open"));
+    head.addEventListener("click",function(){ openDom = open?"":dm.id; render(); });
+    wrapS.appendChild(head);
+    if(open) ts.forEach(function(t){ wrapS.appendChild(threadCard(t)); });
   });
   m.appendChild(wrapS);
+}
+
+function threadCard(t){
+  var on=isOn(t.id), mm=liveMins(t);
+  var c=band("", t.c);
+  var hd=el("div","thh");
+  hd.appendChild(el("b","any",t.n));
+  hd.appendChild(el("span","chip"+(on?"":" quiet"), on?"Running":(t.tag||"")));
+  c.appendChild(hd);
+  var sg=el("div","stage");
+  (t.st||[]).forEach(function(_,ix){ var i=el("i"); if(!isUnset(t) && ix<=stageIx(t)) i.className="done"; sg.appendChild(i); });
+  c.appendChild(sg);
+  var f=el("div","thf");
+  f.appendChild(el("span","any", (isUnset(t)?"stage not set":stageName(t))+" \u2192 "+finalOf(t)));
+  f.appendChild(el("em","num", mm?dur(mm):"0m"));
+  c.appendChild(f);
+  var bts=el("div","thb");
+  var go=el("button", on?"go":"", on?"Stop":"Start");
+  go.addEventListener("click",function(e){ e.stopPropagation(); on?stopFocus(t.id):startFocus(t.id); });
+  var sp=el("button",null,"\ud83c\udf99 Say");
+  sp.addEventListener("click",function(e){ e.stopPropagation(); sayThread=t.id; view="say"; render(); });
+  var mo=el("button",null,"The path");
+  mo.addEventListener("click",function(e){ e.stopPropagation(); openThread(t); });
+  bts.appendChild(go); bts.appendChild(sp); bts.appendChild(mo);
+  c.appendChild(bts);
+  return c;
 }
 
 /* ---------- say ---------- */
@@ -701,8 +855,8 @@ function shHead(sh, kickerText, title){
 
 function openThread(t){
   sheet(function(sh){
-    var g=goalOf(t), on=isOn(t.id);
-    shHead(sh, g?("For: "+g.n):"Serving no goal", t.n);
+    var on=isOn(t.id), dm=domOf(t);
+    shHead(sh, dm?dm.n:(goalOf(t)?("For: "+goalOf(t).n):"A path"), t.n);
     if(t.why) sh.appendChild(el("p","note any",t.why)).style.color="var(--ink2)";
 
     var c=band("", t.c);
@@ -713,38 +867,163 @@ function openThread(t){
     var bts=el("div","thb");
     var go=el("button","go", on?"Stop":"Start working");
     go.addEventListener("click",function(){ on?stopFocus(t.id):startFocus(t.id); closeSheet(); });
-    var sp=el("button",null,"🎙 Say");
+    var sp=el("button",null,"\ud83c\udf99 Say");
     sp.addEventListener("click",function(){ closeSheet(); sayThread=t.id; view="say"; render(); });
     bts.appendChild(go); bts.appendChild(sp); c.appendChild(bts);
     sh.appendChild(c);
 
-    var s=el("div","sec"); s.appendChild(sech("Stage","tap to move it"));
+    var s=el("div","sec"); s.appendChild(sech("The path","tap a stone"));
     var box=band("flat");
-    var rows=el("div","rows"); rows.style.marginTop="0";
-    t.st.forEach(function(name,ix){
-      var b=el("button","row"); b.style.setProperty("--a","var("+t.c+")");
-      b.appendChild(el("span","dot"+(ix<=t.at?"":" cold")));
-      var nm=el("span","nm any"); nm.textContent=name;
-      if(ix===t.at) nm.style.fontWeight="800";
-      b.appendChild(nm);
-      b.appendChild(el("span","val", ix===t.at?"now":(ix<t.at?"done":"")));
-      b.addEventListener("click",function(){ if(ix!==t.at) propose(t,name); });
-      rows.appendChild(b);
+    var path=el("div","path");
+    (t.st||[]).forEach(function(name,ix){
+      var cur=stageIx(t), unset=isUnset(t);
+      var cls = unset ? "ahead" : (ix<cur?"done":(ix===cur?"here":"ahead"));
+      var b=el("button","stone "+cls);
+      b.style.setProperty("--a","var("+t.c+")");
+      b.appendChild(el("span","bead"));
+      b.appendChild(el("span","st any",name));
+      if(!unset && ix===cur) b.appendChild(el("span","mk","here"));
+      if(unset && ix===0) b.appendChild(el("span","mk","not set"));
+      b.addEventListener("click",function(){ setStage(t,ix); closeSheet(); });
+      path.appendChild(b);
     });
-    box.appendChild(rows); s.appendChild(box);
-    s.appendChild(el("p","note","The board is rewritten from the repository, never from the phone, so tapping a stage sends Claude the change and the reason travels with it."));
+    box.appendChild(path);
+    var flag=el("div","final");
+    flag.style.setProperty("--a","var("+t.c+")");
+    var fl=el("span","fl");
+    fl.appendChild(el("b","any", finalOf(t)||"No final named"));
+    fl.appendChild(el("span","tag","the final"));
+    flag.appendChild(fl);
+    flag.appendChild(el("span","num", isUnset(t)?"not started":((stageIx(t)+1)+" of "+stageCount(t))));
+    box.appendChild(flag);
+    var ns=el("p","nextstep any");
+    ns.appendChild(el("b","tag","next step "));
+    ns.appendChild(document.createTextNode(t.next || "Not named yet. Say what it is and Claude files it."));
+    box.appendChild(ns);
+    s.appendChild(box);
     sh.appendChild(s);
+
+    if((t.files||[]).length){
+      var sf=el("div","sec"); sf.appendChild(sech("Files","open and add a line"));
+      (t.files||[]).forEach(function(pth){
+        var b=el("button","row");
+        b.style.setProperty("--a","var("+t.c+")");
+        b.appendChild(el("span","dot"));
+        var nm=el("span","nm any"); nm.textContent=pth.split("/").pop();
+        nm.appendChild(el("u",null,pth));
+        b.appendChild(nm);
+        b.appendChild(el("span","val","open"));
+        b.addEventListener("click",function(){ openFileSheet(pth, t); });
+        sf.appendChild(b);
+      });
+      sh.appendChild(sf);
+    }
   });
 }
 
-function propose(t, stage){
-  var title="Update: "+t.n;
-  var body="Moved to **"+stage+"**.\n\n---\nThread: `"+t.id+"`\nSent from the Planner app, "+new Date().toISOString()+".";
-  queue.push({kind:"issue", title:title, body:body}); put(K.queue,queue);
-  closeSheet(); syncMsg="sending"; render();
-  flushQueue().then(function(){
-    syncMsg = queue.length ? "queued, no signal" : "sent";
-    issues=null; loadIssues(true).then(render);
+function openFileSheet(path, t){
+  sheet(function(sh){
+    shHead(sh, path, path.split("/").pop());
+    var state=el("p","note","Loading…"); sh.appendChild(state);
+    if(path.indexOf("patents/")===0){
+      var w=el("p","note bad");
+      w.textContent="Patent files carry title, status and dates only. The invention never goes in here.";
+      sh.appendChild(w);
+    }
+    var body=el("div"); sh.appendChild(body);
+    getFile(path).then(function(r){
+      var text = r?r.text:"", sha = r?r.sha:"";
+      state.textContent = r?"":"New file. It will be created when you save.";
+      var heads=[], re=/^##\s+(.+)$/gm, mm2;
+      while((mm2=re.exec(text))) heads.push(mm2[1].trim());
+      body.innerHTML="";
+      if(!heads.length){
+        body.appendChild(el("p","note","No sections in this file yet. Open it on the desktop to edit the whole thing."));
+        return;
+      }
+      var f1=el("div","fld"); f1.appendChild(el("label","tag","Section"));
+      var sel1=el("select");
+      heads.forEach(function(h){ var o=el("option",null,h); o.value=h; sel1.appendChild(o); });
+      f1.appendChild(sel1); body.appendChild(f1);
+      var f2=el("div","fld"); f2.appendChild(el("label","tag","One line"));
+      var ta=el("textarea"); ta.id="filta"; ta.setAttribute("dir","auto");
+      ta.placeholder="What was delivered, what is still missing. Dictation key works here.";
+      f2.appendChild(ta); body.appendChild(f2);
+      var save=el("button","wide","Add and save");
+      save.addEventListener("click",function(){
+        var v=ta.value.trim(); if(!v) return;
+        save.textContent="Saving…";
+        var line="- "+todayStr()+" \u2014 "+v;
+        var lines=text.split("\n"), at=-1, i;
+        for(i=0;i<lines.length;i++) if(/^##\s+/.test(lines[i]) && lines[i].replace(/^##\s+/,"").trim()===sel1.value){ at=i; break; }
+        var next;
+        if(at===-1) next = text.replace(/\s*$/,"")+"\n\n## "+sel1.value+"\n\n"+line+"\n";
+        else {
+          var end=lines.length;
+          for(i=at+1;i<lines.length;i++) if(/^##\s+/.test(lines[i])){ end=i; break; }
+          var seg=lines.slice(at+1,end);
+          while(seg.length && !seg[seg.length-1].trim()) seg.pop();
+          seg.push(line);
+          next = lines.slice(0,at+1).concat(seg,[""],lines.slice(end)).join("\n");
+        }
+        putFile(path, next, sha, "Update "+path+" from the phone")
+          .then(function(){ closeSheet(); syncMsg="file saved"; render(); })
+          .catch(function(e){ save.textContent=e.message; });
+      });
+      body.appendChild(save);
+    }).catch(function(e){ state.className="note bad"; state.textContent=e.message; });
+  });
+}
+
+function assignSheet(dateStr, blockIx, blk){
+  sheet(function(sh){
+    var who=planned(dateStr,blockIx), th=who?T(who):null;
+    shHead(sh, blk[0]+" \u00b7 "+blk[1], th?th.n:"Nothing on this block");
+    sh.appendChild(el("p","note","One block holds one thread. That is the whole rule."));
+    if(th){
+      var c=band("", th.c);
+      var bts=el("div","thb");
+      var on=isOn(th.id);
+      var go=el("button","go", on?"Stop":"Start working");
+      go.addEventListener("click",function(){ on?stopFocus(th.id):startFocus(th.id); closeSheet(); });
+      var opn=el("button",null,"The path");
+      opn.addEventListener("click",function(){ closeSheet(); openThread(th); });
+      var clr=el("button",null,"Clear");
+      clr.addEventListener("click",function(){ assign(dateStr,blockIx,""); closeSheet(); });
+      bts.appendChild(go); bts.appendChild(opn); bts.appendChild(clr);
+      c.appendChild(bts); sh.appendChild(c);
+    }
+    var doms=domains();
+    var s=el("div","sec"); s.appendChild(sech("Put a thread on it"));
+    function row(t){
+      var b=el("button","row");
+      b.style.setProperty("--a","var("+t.c+")");
+      b.appendChild(el("span","dot"+(who===t.id?"":" cold")));
+      var nm=el("span","nm any"); nm.textContent=t.n;
+      nm.appendChild(el("u",null,(isUnset(t)?"stage not set":stageName(t))+" \u2192 "+finalOf(t)));
+      b.appendChild(nm);
+      b.appendChild(el("span","val", who===t.id?"on it":""));
+      b.addEventListener("click",function(){ assign(dateStr,blockIx,t.id); closeSheet(); });
+      return b;
+    }
+    if(doms.length){
+      doms.forEach(function(dm){
+        var ts=threadsIn(dm.id);
+        if(!ts.length) return;
+        var c=band("", dm.c);
+        var hd=el("div","thh");
+        hd.appendChild(el("b",null,dm.n));
+        hd.appendChild(el("span","chip quiet num",String(ts.length)));
+        c.appendChild(hd);
+        ts.forEach(function(t){ c.appendChild(row(t)); });
+        s.appendChild(c);
+      });
+    } else {
+      var c2=band("flat");
+      board.threads.forEach(function(t){ c2.appendChild(row(t)); });
+      s.appendChild(c2);
+    }
+    sh.appendChild(s);
   });
 }
 
@@ -814,6 +1093,8 @@ function settings(){
       if(v){ token=v; put(K.tok,v); inp.value=""; }
       $("setst").textContent="Testing…"; $("setst").className="note";
       gh("/issues?per_page=1").then(function(){ return pullBoard(); })
+        .then(function(){ return pullStatus(); })
+        .then(function(){ return pullPlan(); })
         .then(function(){ return pullLog(); })
         .then(function(){
           $("setst").textContent="Connected. Board synced."; $("setst").className="note ok";
@@ -855,14 +1136,16 @@ setInterval(function(){ if(view==="now"||view==="threads") render(); }, 30000);
 
 if(token){
   flushQueue();
-  pullBoard().then(function(j){ if(j){ syncMsg="synced"; render(); } })
-             .catch(function(e){ syncMsg=e.message; });
+  pullBoard()
+    .then(function(j){ if(j){ syncMsg="synced"; render(); } })
+    .then(pullStatus).then(pullPlan).then(render)
+    .catch(function(e){ syncMsg=e.message; render(); });
   pullLog().then(render).catch(function(){});
 }
 
 if("serviceWorker" in navigator){
   window.addEventListener("load",function(){
-    navigator.serviceWorker.register("sw.js?v=8",{updateViaCache:"none"}).then(function(reg){
+    navigator.serviceWorker.register("sw.js?v=9",{updateViaCache:"none"}).then(function(reg){
       try{ reg.update(); }catch(e){}
     }).catch(function(){});
   });
