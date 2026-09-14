@@ -41,6 +41,43 @@ function b64d(s){
     return "%"+("00"+c.charCodeAt(0).toString(16)).slice(-2); }).join(""));
 }
 function b64e(s){ return btoa(unescape(encodeURIComponent(s))); }
+var ICONS={
+  clock:["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z","M12 7v5l3.4 2"],
+  calendar:["M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z","M8 3v4","M16 3v4","M4 10h16"],
+  inbox:["M4 13h4l2 3h4l2-3h4","M6.4 5h11.2L20 13v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-5z"],
+  target:["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z","M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z","M12 13.2a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4z"],
+  help:["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z","M9.6 9.4a2.5 2.5 0 1 1 3.3 2.4c-.8.3-1.1.9-1.1 1.6v.4","M12 17.2h.01"],
+  folder:["M4 7a1 1 0 0 1 1-1h4l2 2h8a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"],
+  play:["M8.5 5.5 18 12l-9.5 6.5z"],
+  stop:["M7 7h10v10H7z"],
+  save:["M5 4h9l5 5v11H5z","M8.5 4v5h6"],
+  ext:["M14 5h5v5","M19 5l-7.5 7.5","M18 13.5V19a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1h5.5"],
+  back:["M14.5 6 9 12l5.5 6"],
+  search:["M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14z","M20 20l-4-4"],
+  refresh:["M19.5 12a7.5 7.5 0 1 1-2.2-5.3","M19.5 4v4.5H15"],
+  settings:["M4 7h9","M17 7h3","M4 12h3","M11 12h9","M4 17h11","M19 17h1","M15 7a2 2 0 1 0 0-.01","M9 12a2 2 0 1 0 0-.01","M17 17a2 2 0 1 0 0-.01"],
+  chat:["M20 12.5a6.5 6.5 0 0 1-6.5 6.5H9l-4 3v-4.3A6.5 6.5 0 0 1 8.5 6h5A6.5 6.5 0 0 1 20 12.5z"],
+  doc:["M7 4h7l4 4v12H7z","M14 4v4h4","M10 13h6","M10 16.5h4"],
+  layers:["M12 4 4 8.5 12 13l8-4.5z","M4 14.5 12 19l8-4.5"],
+  plus:["M12 6v12","M6 12h12"],
+  check:["M5 12.5 10 17 19 7"]
+};
+function icon(name){
+  var d=ICONS[name]; if(!d) return null;
+  var svg=document.createElementNS("http://www.w3.org/2000/svg","svg");
+  svg.setAttribute("viewBox","0 0 24 24"); svg.setAttribute("class","ic"); svg.setAttribute("aria-hidden","true");
+  d.forEach(function(p){
+    var e=document.createElementNS("http://www.w3.org/2000/svg","path");
+    e.setAttribute("d",p); svg.appendChild(e);
+  });
+  return svg;
+}
+function withIcon(btn,name){ var i=icon(name); if(i) btn.insertBefore(i, btn.firstChild); return btn; }
+function emptyState(name,text){
+  var w=el("div","empty"); var i=icon(name); if(i) w.appendChild(i);
+  w.appendChild(el("span",null,text)); return w;
+}
+
 function safe(f){ try{ f(); }catch(e){ note("Render failed: "+(e&&e.message?e.message:e),"bad"); } }
 
 var DAYS=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
@@ -338,33 +375,33 @@ function openThread(id){
 /* ---- rail ---- */
 function paintRail(){
   var r=$("rail"); r.innerHTML="";
-  function item(kind,id,label,colour,count,live){
+  function item(kind,id,label,colour,count,live,ico){
     var b=el("button","ri"); b.type="button";
     b.setAttribute("aria-current", (sel.kind===kind && sel.id===(id||""))?"true":"false");
     if(colour) b.style.setProperty("--a",cvar(colour));
-    var sw=el("span","sw"); if(!colour) sw.style.background="transparent";
-    b.appendChild(sw);
+    if(colour){ b.appendChild(el("span","sw")); }
+    else { var ic=icon(ico||"doc"); if(ic){ ic.style.color="var(--faint)"; b.appendChild(ic); } }
     b.appendChild(el("span","nm",label));
     if(count!=null) b.appendChild(el("span","ct"+(live?" live":""),String(count)));
     b.addEventListener("click",function(){ pick(kind,id); });
     r.appendChild(b);
   }
-  r.appendChild(el("div","railh","Day"));
-  item("today","","Today",null, runIds().length||null, runIds().length>0);
-  item("week","","The week",null,null);
+  r.appendChild(el("div","railh lab","Day"));
+  item("today","","Today",null, runIds().length||null, runIds().length>0, "clock");
+  item("week","","The week",null,null,false,"calendar");
 
-  r.appendChild(el("div","railh","Categories"));
+  r.appendChild(el("div","railh lab","Categories"));
   domains().forEach(function(d){
     var ts=threadsIn(d.id);
     var liveN=ts.filter(function(t){ return isOn(t.id); }).length;
     item("domain",d.id,d.n,d.c,ts.length,liveN>0);
   });
 
-  r.appendChild(el("div","railh","Everything else"));
-  item("inbox","","Inbox",null, issues?issues.length:null, issues&&issues.length>0);
-  item("goals","","The year",null,(board.goals||[]).length);
-  item("open","","Waiting on you",null,(board.open||[]).length);
-  item("files","","Files",null,null);
+  r.appendChild(el("div","railh lab","Everything else"));
+  item("inbox","","Inbox",null, issues?issues.length:null, issues&&issues.length>0, "inbox");
+  item("goals","","The year",null,(board.goals||[]).length,false,"target");
+  item("open","","Waiting on you",null,(board.open||[]).length,false,"help");
+  item("files","","Files",null,null,false,"folder");
 }
 
 /* ---- list ---- */
@@ -415,7 +452,7 @@ function listToday(n){
   var cur=curBlock(), nx=nextBlock(), t=nowMin();
   var now=el("div","now");
   now.style.setProperty("--a", cur?cvar(cur.b[3]):"var(--neutral)");
-  now.appendChild(el("span","lb", cur?"In this block":"Off the clock"));
+  now.appendChild(el("span","lb lab", cur?"In this block":"Off the clock"));
   now.appendChild(el("span","bg wrapall", cur?cur.b[1]:"Nothing scheduled"));
   var assigned = cur ? planned(today(), cur.i) : "";
   var at = assigned ? T(assigned) : null;
@@ -427,7 +464,7 @@ function listToday(n){
   var wk=0; for(var k in mins) if(mins.hasOwnProperty(k)) wk+=mins[k];
   runIds().forEach(function(id){ wk+=(Date.now()-running[id])/60000; });
   var mini=el("div","mini");
-  function mc(v,l){ var c=el("div","mc"); c.appendChild(el("b",null,v)); c.appendChild(el("span",null,l)); mini.appendChild(c); }
+  function mc(v,l){ var c=el("div","mc"); c.appendChild(el("b","num",v)); c.appendChild(el("span","lab",l)); mini.appendChild(c); }
   mc(String(runIds().length),"running now");
   mc(dur(wk),"logged, 7 days");
   mc(String(issues?issues.length:0),"open issues");
@@ -435,10 +472,10 @@ function listToday(n){
   n.appendChild(mini);
 
   if(runIds().length){
-    n.appendChild(el("div","railh","Running"));
+    n.appendChild(el("div","railh lab","Running"));
     runIds().forEach(function(id){ var x=T(id); if(x) threadRow(n,x); });
   }
-  n.appendChild(el("div","railh","Today's blocks"));
+  n.appendChild(el("div","railh lab","Today's blocks"));
   var tl=el("div","tl");
   (board.week[new Date().getDay()]||[]).forEach(function(b,ix){
     var marker=b[5]<=b[4];
@@ -453,7 +490,7 @@ function listToday(n){
 
   var crit=board.threads.filter(function(x){ return x.critical; });
   if(crit.length){
-    n.appendChild(el("div","railh","Phase 1, the four"));
+    n.appendChild(el("div","railh lab","Phase 1, the four"));
     crit.forEach(function(x){ threadRow(n,x); });
   }
 }
@@ -464,7 +501,7 @@ function listWeek(n){
   var g=el("div","wkgrid");
   for(var d=0;d<7;d++){
     var col=el("div","dcol");
-    col.appendChild(el("div","dhh"+(d===td?" today":""),DAYS[d]));
+    col.appendChild(el("div","dhh lab"+(d===td?" today":""),DAYS[d]));
     (board.week[d]||[]).forEach(function(b,ix){
       var marker=b[5]<=b[4];
       var k=el("div","tb"+((d===td&&cur&&cur.i===ix&&!marker)?" now":""));
@@ -482,7 +519,7 @@ function listInbox(n){
   listHead(n,"Inbox", issues?(issues.length+" open"):"");
   if(issuesErr){ n.appendChild(el("p","note bad wrapall",issuesErr)); return; }
   if(!issues){ n.appendChild(el("p","empty","Not loaded yet.")); return; }
-  if(!issues.length){ n.appendChild(el("p","empty","Nothing open. Everything you sent has been acted on and closed.")); return; }
+  if(!issues.length){ n.appendChild(emptyState("check","Nothing open. Everything you sent has been acted on and closed.")); return; }
   issues.forEach(function(is){
     var b=el("button","li"); b.type="button";
     var r1=el("div","t1");
@@ -510,7 +547,7 @@ function listGoals(n){
     n.appendChild(b);
   });
   if(board.apex){ n.appendChild(el("p","note wrapall",board.apex)); }
-  n.appendChild(el("div","railh","Coming up"));
+  n.appendChild(el("div","railh lab","Coming up"));
   (board.events||[]).forEach(function(e){
     var b=el("div","li");
     var r1=el("div","t1"); r1.appendChild(el("span","sw"));
@@ -570,7 +607,7 @@ function listFiles(n){
 
 /* ---- detail ---- */
 function backBtn(d){
-  var b=el("button","back","‹ Back");
+  var b=withIcon(el("button","back","Back"),"back");
   b.addEventListener("click",function(){ file=null; document.body.classList.remove("detail-open"); render(); });
   d.appendChild(b);
 }
@@ -585,7 +622,8 @@ function paintDetail(){
     if(sel.kind==="today") return detailToday(d);
     backBtn(d);
     d.appendChild(el("h2",null,"Nothing selected"));
-    d.appendChild(el("p","empty","Pick a category on the left, then a thread. Everything about it opens here: stage, timer, files, comments. Press \u2318K to jump straight to one."));
+    d.appendChild(el("div","meta"));
+    d.appendChild(emptyState("layers","Pick a category on the left, then a thread. Stage, timer, files and comments all open here. \u2318K jumps straight to one."));
     return;
   }
   detailThread(d,t);
@@ -596,7 +634,7 @@ function detailToday(d){
   d.appendChild(el("h2",null,"The plan for "+FULL[dayIx]));
   if(board.headline) d.appendChild(el("p","kv wrapall",board.headline));
 
-  var s1=el("div","sec"); s1.appendChild(el("h3",null,"One thread per block"));
+  var s1=el("div","sec"); s1.appendChild(el("h3","lab","One thread per block"));
   s1.appendChild(el("p","note","Each working block holds exactly one thread. A thread with no block is not active, whatever state it is in. Assign them here and the hours become attributable."));
   var any=false;
   blocks.forEach(function(b,ix){
@@ -637,7 +675,7 @@ function detailToday(d){
     }
     s1.appendChild(row);
   });
-  if(!any) s1.appendChild(el("p","empty","No working block today. Nothing to assign."));
+  if(!any) s1.appendChild(emptyState("calendar","No working block today. Nothing to assign."));
   d.appendChild(s1);
 
   var unplanned=board.threads.filter(function(t){ return t.critical; }).filter(function(t){
@@ -645,11 +683,13 @@ function detailToday(d){
     return !got;
   });
   if(unplanned.length){
-    var s2=el("div","sec"); s2.appendChild(el("h3",null,"Phase 1, not on today"));
+    var s2=el("div","sec"); s2.appendChild(el("h3","lab","Phase 1, not on today"));
     unplanned.forEach(function(t){
       var r=el("div","file");
+      var sw=el("span","sw"); sw.style.cssText="width:7px;height:7px;border-radius:50%;flex:none;background:"+cvar(t.c||domOf(t).c);
+      r.appendChild(sw);
       r.appendChild(el("span","p wrapall",t.n));
-      var b=el("button","pill","open");
+      var b=el("button","btn sm","Open");
       b.addEventListener("click",function(){ sel={kind:"domain",id:t.dom}; put(K.sel,sel); openThread(t.id); });
       r.appendChild(b);
       s2.appendChild(r);
@@ -659,11 +699,14 @@ function detailToday(d){
 
   var q=board.open||[];
   if(q.length){
-    var s3=el("div","sec"); s3.appendChild(el("h3",null,"Waiting on you, "+q.length));
+    var s3=el("div","sec"); s3.appendChild(el("h3","lab","Waiting on you, "+q.length));
     q.slice(0,3).forEach(function(x,i){
       var r=el("div","file");
+      var nb=el("span","num",String(i+1));
+      nb.style.cssText="flex:none;width:18px;color:var(--faint);font-size:12px";
+      r.appendChild(nb);
       r.appendChild(el("span","p wrapall",x));
-      var b=el("button","pill","answer");
+      var b=el("button","btn sm","Answer");
       b.addEventListener("click",function(){ sel={kind:"open",id:String(i)}; put(K.sel,sel);
         document.body.classList.add("detail-open"); render(); });
       r.appendChild(b);
@@ -700,7 +743,7 @@ function detailThread(d,t){
   }
 
   // stage
-  var s1=el("div","sec"); s1.appendChild(el("h3",null,"Stage"));
+  var s1=el("div","sec"); s1.appendChild(el("h3","lab","Stage"));
   var steps=el("div","steps");
   (t.st||[]).forEach(function(name,ix){
     var cur=stageIx(t), cls="step"+(ix===cur&&!isUnset(t)?" at":(ix<cur&&!isUnset(t)?" past":""));
@@ -714,9 +757,10 @@ function detailThread(d,t){
   d.appendChild(s1);
 
   // timer
-  var s2=el("div","sec"); s2.appendChild(el("h3",null,"Time"));
+  var s2=el("div","sec"); s2.appendChild(el("h3","lab","Time"));
   var row=el("div","btnrow");
   var go=el("button","btn "+(isOn(t.id)?"stop":"pri"), isOn(t.id)?"Stop":"Start working");
+  withIcon(go, isOn(t.id)?"stop":"play");
   go.addEventListener("click",function(){ isOn(t.id)?stop(t.id):start(t.id); });
   row.appendChild(go);
   if(runIds().length>1){
@@ -735,15 +779,16 @@ function detailThread(d,t){
   d.appendChild(s2);
 
   // files
-  var s3=el("div","sec"); s3.appendChild(el("h3",null,"Files"));
+  var s3=el("div","sec"); s3.appendChild(el("h3","lab","Files"));
   if(!(t.files||[]).length){
-    s3.appendChild(el("p","empty","No file is linked to this thread yet. Open any path from the Files list on the left."));
+    s3.appendChild(emptyState("folder","No file is linked to this thread yet. Open any path from the Files list on the left."));
   } else {
     var fl=el("div","filelist");
     (t.files||[]).forEach(function(p){
       var b=el("button","file"); b.type="button";
+      var fi=icon("doc"); if(fi){ fi.style.color="var(--faint)"; b.appendChild(fi); }
       b.appendChild(el("span","p mono",p));
-      b.appendChild(el("span","pill","open"));
+      b.appendChild(el("span","pill ghost","open"));
       b.addEventListener("click",function(){ openFile(p); });
       fl.appendChild(b);
     });
@@ -752,7 +797,7 @@ function detailThread(d,t){
   d.appendChild(s3);
 
   // comment
-  var s4=el("div","sec"); s4.appendChild(el("h3",null,"Say something about this"));
+  var s4=el("div","sec"); s4.appendChild(el("h3","lab","Say something about this"));
   var kind=document.createElement("select");
   ["Update","Decision","Ask","New thread"].forEach(function(k){
     var o=document.createElement("option"); o.value=k; o.textContent=k; kind.appendChild(o);
@@ -762,7 +807,7 @@ function detailThread(d,t){
   ta.placeholder="What happened, what changed, what you decided. Dictation key works here.";
   s4.appendChild(ta);
   var br=el("div","btnrow");
-  var send=el("button","btn pri","Send");
+  var send=withIcon(el("button","btn pri","Send"),"chat");
   send.addEventListener("click",function(){
     var v=ta.value.trim(); if(!v) return;
     ta.value=""; comment(t,kind.value,v);
@@ -774,7 +819,7 @@ function detailThread(d,t){
   // this thread's open issues
   var mine=issuesFor(t.id);
   if(mine.length){
-    var s5=el("div","sec"); s5.appendChild(el("h3",null,"Open on this thread"));
+    var s5=el("div","sec"); s5.appendChild(el("h3","lab","Open on this thread"));
     mine.forEach(function(is){
       var c=el("div","cmt");
       var hh=el("div","h");
@@ -783,9 +828,9 @@ function detailThread(d,t){
       c.appendChild(hh);
       c.appendChild(el("p","wrapall",(is.body||"").split("\n---\n")[0]));
       var row2=el("div","btnrow");
-      var op=el("button","btn","Open on GitHub");
+      var op=withIcon(el("button","btn sm","Open on GitHub"),"ext");
       op.addEventListener("click",function(){ window.open(is.html_url,"_blank","noopener"); });
-      var cl=el("button","btn warn","Close");
+      var cl=el("button","btn sm warn","Close");
       cl.addEventListener("click",function(){ cl.textContent="Closing…"; closeIssue(is.number).catch(function(e){ note(e.message,"bad"); }); });
       row2.appendChild(op); row2.appendChild(cl);
       c.appendChild(row2);
@@ -810,7 +855,7 @@ function detailFile(d){
 
   var hs=headingsOf(f.text||"");
   if(hs.length){
-    var qa=el("div","sec"); qa.appendChild(el("h3",null,"Add a line"));
+    var qa=el("div","sec"); qa.appendChild(el("h3","lab","Add a line"));
     var selh=document.createElement("select");
     hs.forEach(function(x){ var o=document.createElement("option"); o.value=x; o.textContent=x; selh.appendChild(o); });
     selh.style.marginBottom="8px"; qa.appendChild(selh);
@@ -829,12 +874,12 @@ function detailFile(d){
     d.appendChild(qa);
   }
 
-  var s=el("div","sec"); s.appendChild(el("h3",null,"The whole file"));
+  var s=el("div","sec"); s.appendChild(el("h3","lab","The whole file"));
   var ta=document.createElement("textarea"); ta.className="code"; ta.value=f.text||"";
   ta.addEventListener("input",function(){ f.text=ta.value; });
   s.appendChild(ta);
   var row=el("div","btnrow");
-  var sv=el("button","btn pri","Save to the repository");
+  var sv=withIcon(el("button","btn pri","Save to the repository"),"save");
   sv.addEventListener("click",function(){ saveFile(); });
   var rv=el("button","btn","Revert");
   rv.addEventListener("click",function(){ f.text=f.orig; render(); });
@@ -868,7 +913,7 @@ function detailQuestion(d,ix){
   if(!q){ d.appendChild(el("p","empty","No question there.")); return; }
   d.appendChild(el("h2","wrapall",q));
   d.appendChild(el("p","meta","Waiting on you"));
-  var s=el("div","sec"); s.appendChild(el("h3",null,"Answer it"));
+  var s=el("div","sec"); s.appendChild(el("h3","lab","Answer it"));
   var ta=document.createElement("textarea");
   ta.placeholder="Your answer. It goes in as a decision and Claude files it.";
   s.appendChild(ta);
@@ -956,13 +1001,13 @@ function settings(){
   var ov=el("div","modal");
   ov.addEventListener("click",function(e){ if(e.target===ov) h.innerHTML=""; });
   var cd=el("div","cd");
-  cd.appendChild(el("h3",null,"Settings"));
+  cd.appendChild(el("h3","lab","Settings"));
 
-  cd.appendChild(el("h3",null,"Repository"));
+  cd.appendChild(el("h3","lab","Repository"));
   var rin=document.createElement("input"); rin.type="text"; rin.value=REPO();
   rin.placeholder="owner/name"; rin.autocomplete="off"; rin.spellcheck=false;
   cd.appendChild(rin);
-  cd.appendChild(el("h3",null,"GitHub token"));
+  cd.appendChild(el("h3","lab","GitHub token"));
   var tin=document.createElement("input"); tin.type="password";
   tin.placeholder=token?"Saved. Paste a new one to replace it.":"github_pat_…";
   tin.autocomplete="off"; tin.spellcheck=false;
@@ -998,6 +1043,7 @@ function settings(){
 /* ---------- boot ---------- */
 (function(){ var t=getRaw(K.theme); if(t) document.documentElement.setAttribute("data-theme",t); })();
 
+withIcon($("palette"),"search"); withIcon($("refresh"),"refresh"); withIcon($("gear"),"settings");
 $("gear").addEventListener("click",settings);
 $("refresh").addEventListener("click",function(){ sync(); });
 $("palette").addEventListener("click",openPalette);
