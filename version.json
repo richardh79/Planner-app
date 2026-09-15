@@ -1,0 +1,5 @@
+{
+  "build": "2026-09-15.1",
+  "published": "2026-09-15",
+  "note": "Bump build on every publish. The apps check this file and repair themselves when it moves."
+}

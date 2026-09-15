@@ -90,6 +90,25 @@ Open `<your pages url>/desktop.html`. In Chrome or Edge, the install button in
 the address bar turns it into a desktop app in its own window. The phone app is
 untouched: two manifests, two installs, one set of data.
 
+## Keeping a phone current
+
+A phone can hold an old copy of an installed web app for a very long time: the
+shell is cached, the worker that cached it is cached, and nothing in that loop
+ever asks whether anything moved. Three things close it.
+
+- `version.json` carries the current build. Neither the service worker nor the
+  browser cache is allowed to serve it.
+- Both apps read it on open and whenever they come back to the foreground. If
+  the build has moved they clear every cache, remove the worker and reload
+  once. A guard stops that repeating.
+- `update.html` does the same thing by hand, for a copy so stale that it cannot
+  run the check. Open `<your pages url>/update.html` once and the install is
+  repaired.
+
+Settings in both apps shows the running build and carries a **Force update**
+button. **Bump `version.json` on every publish**, alongside the `?v=` query on
+the scripts and the service worker cache name.
+
 ## What it expects in your repository
 
 `data/board.json`:

@@ -6,6 +6,7 @@
 var K    = { tok:"planner.token", repo:"planner.repo", board:"planner.board", focus:"planner.focus",
              mins:"planner.mins", queue:"planner.queue", lang:"planner.lang", theme:"planner.theme",
              running:"planner.running" };
+var BUILD = "2026-09-15.1";   // bumped on every publish, checked against version.json
 function REPO(){ return getRaw(K.repo) || ""; }
 function API(){ return "https://api.github.com/repos/" + REPO(); }
 
@@ -1113,7 +1114,54 @@ function settings(){
 
     sh.appendChild(el("p","note","Make the token at github.com, Settings, Developer settings, Personal access tokens, Fine-grained. Give it access to that one repository, with Contents and Issues set to read and write. Nothing else."));
     sh.appendChild(el("p","note","It is stored in this browser alone and sent only to api.github.com. Forget it here and it is gone."));
+
+    var vs=el("div","sec"); vs.appendChild(sech("This copy"));
+    vs.appendChild(el("p","note","Version "+BUILD+". The app checks for a newer one each time it opens."));
+    var fu=el("button","wide ghost","Force update");
+    fu.addEventListener("click",function(){
+      fu.textContent="Clearing…";
+      try{ sessionStorage.removeItem("planner.repair"); }catch(e){}
+      repairInstall();
+    });
+    vs.appendChild(fu);
+    sh.appendChild(vs);
   });
+}
+
+/* ---------- keeping itself current ----------
+   A phone can hold an old copy of this app for a very long time: the shell is
+   cached, the worker that cached it is cached, and nothing in the loop asks
+   whether anything moved. So the app asks, every time it opens. */
+function repairInstall(){
+  var jobs=[];
+  if(window.caches && caches.keys){
+    jobs.push(caches.keys().then(function(ks){
+      return Promise.all(ks.map(function(k){ return caches.delete(k); }));
+    }));
+  }
+  if(navigator.serviceWorker && navigator.serviceWorker.getRegistrations){
+    jobs.push(navigator.serviceWorker.getRegistrations().then(function(rs){
+      return Promise.all(rs.map(function(r){ return r.unregister(); }));
+    }));
+  }
+  return Promise.all(jobs).catch(function(){}).then(function(){
+    location.replace(location.pathname+"?fresh="+Date.now());
+  });
+}
+function checkForUpdate(){
+  if(!window.fetch) return;
+  fetch("version.json?t="+Date.now(), {cache:"no-store"})
+    .then(function(r){ return r.ok?r.json():null; })
+    .then(function(j){
+      if(!j || !j.build || j.build===BUILD) return;
+      var tries=0;
+      try{ tries=parseInt(sessionStorage.getItem("planner.repair")||"0",10)||0; }catch(e){}
+      if(tries>=2){ syncMsg="update waiting, open settings and tap Force update"; render(); return; }
+      try{ sessionStorage.setItem("planner.repair",String(tries+1)); }catch(e){}
+      syncMsg="updating to "+j.build; render();
+      repairInstall();
+    })
+    .catch(function(){});
 }
 
 /* ---------- boot ---------- */
@@ -1132,6 +1180,10 @@ document.addEventListener("keydown",function(e){ if(e.key==="Escape") closeSheet
 /* ---------- boot ---------- */
 applyTheme();
 render();
+checkForUpdate();
+document.addEventListener("visibilitychange",function(){
+  if(document.visibilityState==="visible") checkForUpdate();
+});
 setInterval(function(){ if(view==="now"||view==="threads") render(); }, 30000);
 
 if(token){
@@ -1145,8 +1197,11 @@ if(token){
 
 if("serviceWorker" in navigator){
   window.addEventListener("load",function(){
-    navigator.serviceWorker.register("sw.js?v=9",{updateViaCache:"none"}).then(function(reg){
+    navigator.serviceWorker.register("sw.js?v=10",{updateViaCache:"none"}).then(function(reg){
       try{ reg.update(); }catch(e){}
+      document.addEventListener("visibilitychange",function(){
+        if(document.visibilityState==="visible"){ try{ reg.update(); }catch(e){} }
+      });
     }).catch(function(){});
   });
 }

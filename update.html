@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0B0C0E">
+<title>Planner, repair the install</title>
+<style>
+/* Deliberately dependency free. This page has to work when everything else on
+   the device is serving a stale copy of itself. */
+:root{color-scheme:dark light}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+  padding:24px;background:#0B0C0E;color:#ECEEF1;
+  font-family:-apple-system,"Segoe UI",Roboto,system-ui,sans-serif;font-size:16px;line-height:1.55}
+@media (prefers-color-scheme: light){ body{background:#FAFAF9;color:#101215} }
+.card{width:100%;max-width:26rem}
+h1{margin:0 0 6px;font-size:1.6rem;font-weight:700;letter-spacing:-.02em}
+p{margin:0 0 14px;color:#A8AFB9}
+@media (prefers-color-scheme: light){ p{color:#4A5058} }
+ol{margin:0 0 16px;padding-left:20px;color:#A8AFB9}
+li{margin:6px 0}
+.step{display:flex;gap:12px;align-items:center;padding:11px 0;border-top:1px solid rgba(236,238,241,.12)}
+.step:first-of-type{border-top:none}
+.step b{flex:1;font-weight:500;font-size:.95rem}
+.step .s{flex:none;font-size:.8rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#767D88}
+.step.done .s{color:#3ED08A}
+.step.fail .s{color:#FF6B6B}
+a.btn,button{display:block;width:100%;margin-top:18px;padding:15px 0;border:none;border-radius:12px;
+  background:#6E9CFF;color:#0B0C0E;font:inherit;font-weight:700;text-align:center;text-decoration:none;
+  cursor:pointer}
+.note{margin-top:16px;font-size:.85rem;color:#767D88}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Repairing the app</h1>
+  <p>This clears the old copy your phone kept and loads the current one. It touches nothing else: your token and your settings stay where they are.</p>
+
+  <div class="step" id="s1"><b>Clearing the stored copy</b><span class="s">…</span></div>
+  <div class="step" id="s2"><b>Removing the old worker</b><span class="s">…</span></div>
+  <div class="step" id="s3"><b>Fetching the current version</b><span class="s">…</span></div>
+
+  <a class="btn" id="go" href="./index.html">Open the app</a>
+  <p class="note" id="ver">Checking…</p>
+  <p class="note">If it still opens old after this, close the app completely, swiping it away rather than just going to the home screen, then open it again.</p>
+</div>
+<script>
+(function(){
+  function mark(id, ok, text){
+    var e=document.getElementById(id);
+    if(!e) return;
+    e.className="step "+(ok?"done":"fail");
+    e.lastChild.textContent = text || (ok?"done":"skipped");
+  }
+  var jobs=[];
+
+  if(window.caches && caches.keys){
+    jobs.push(caches.keys().then(function(ks){
+      return Promise.all(ks.map(function(k){ return caches.delete(k); })).then(function(){
+        mark("s1", true, ks.length?(ks.length+" cleared"):"nothing stored");
+      });
+    }).catch(function(){ mark("s1", false, "could not clear"); }));
+  } else { mark("s1", true, "not needed"); }
+
+  if(navigator.serviceWorker && navigator.serviceWorker.getRegistrations){
+    jobs.push(navigator.serviceWorker.getRegistrations().then(function(rs){
+      return Promise.all(rs.map(function(r){ return r.unregister(); })).then(function(){
+        mark("s2", true, rs.length?"removed":"none found");
+      });
+    }).catch(function(){ mark("s2", false, "could not remove"); }));
+  } else { mark("s2", true, "not needed"); }
+
+  Promise.all(jobs).catch(function(){}).then(function(){
+    return fetch("version.json?t="+Date.now(), {cache:"no-store"})
+      .then(function(r){ return r.ok?r.json():null; })
+      .then(function(j){
+        if(j && j.build){
+          mark("s3", true, "v"+j.build);
+          document.getElementById("ver").textContent="Current version "+j.build+", published "+(j.published||"");
+        } else { mark("s3", false, "no answer"); }
+      })
+      .catch(function(){ mark("s3", false, "no signal"); });
+  }).then(function(){
+    var go=document.getElementById("go");
+    go.href="./index.html?fresh="+Date.now();
+    go.textContent="Open the app";
+    setTimeout(function(){ location.replace(go.href); }, 2500);
+  });
+})();
+</script>
+</body>
+</html>
