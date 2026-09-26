@@ -11,7 +11,7 @@
 (function(){
 "use strict";
 
-var BUILD = "2026-09-26.4";   // bumped on every publish, checked against version.json
+var BUILD = "2026-09-26.5";   // bumped on every publish, checked against version.json
 var K = { tok:"planner.token", repo:"planner.repo", board:"planner.board",
           mins:"planner.mins", queue:"planner.queue", theme:"planner.theme",
           running:"planner.running", sel:"planner.sel", lang:"planner.lang" };
@@ -207,7 +207,7 @@ function boardAge(){
   var n=daysSince(board.updated);
   return (n===null||isNaN(n)) ? null : n;
 }
-function liveMins(id){ return (mins[id]||0) + (isOn(id) ? (Date.now()-running[id])/60000 : 0); }
+function liveMins(id){ return (mins[id]||0) + (deskMins[id]||0) + (isOn(id) ? (Date.now()-running[id])/60000 : 0); }
 function domMins(dom){ var s=0; threadsIn(dom).forEach(function(t){ s+=liveMins(t.id); }); return s; }
 function issuesFor(id){
   if(!issues) return [];
@@ -397,7 +397,7 @@ function sync(){
   if(!connected()){ stateMsg=""; render(); return Promise.resolve(); }
   busy=true; note("Syncing…");
   return flushQueue()
-    .then(pullBoard).then(pullStatus).then(pullPlan).then(pullDates).then(pullTicks).then(pullAnswers).then(pullLog).then(loadIssues)
+    .then(pullBoard).then(pullStatus).then(pullPlan).then(pullDates).then(pullTicks).then(pullAnswers).then(pullDesk).then(pullLog).then(loadIssues)
     .then(function(){ return loadMine(true); })
     .then(function(){ busy=false; lastSync=Date.now(); stateMsg=""; render(); })
     .catch(function(e){ busy=false; note(e.message,"bad"); render(); });
@@ -434,6 +434,34 @@ function pullAnswers(){
   return gh("/contents/data/answers.jsonl",{soft404:true}).then(function(r){
     answers={}; readLines(r).forEach(function(o){ if(o.q) answers[o.q]=o; });
   });
+}
+/* Desktop work: one line per local Claude Code session, written by the hook in
+   the private repository. Active minutes and tokens only; never content. */
+var deskMins={}, deskWeek={min:0, n:0, tok:0, proj:{}};
+function pullDesk(){
+  return gh("/contents/desktop/sessions.jsonl",{soft404:true}).then(function(r){
+    var cut=Date.now()-7*864e5, dm={}, w={min:0, n:0, tok:0, proj:{}};
+    readLines(r).forEach(function(o){
+      if(o.active_minutes==null) return;
+      var at=new Date(o.start||o.ts).getTime();
+      if(!(at>=cut)) return;
+      var m=Number(o.active_minutes)||0, tk=o.tokens||{}, t=0;
+      for(var k in tk) if(tk.hasOwnProperty(k)) t+=Number(tk[k])||0;
+      w.min+=m; w.n++; w.tok+=t;
+      var key=o.thread||("\u00b7 "+(o.project||"unknown"));
+      w.proj[key]=(w.proj[key]||0)+m;
+      if(o.thread) dm[o.thread]=(dm[o.thread]||0)+m;
+    });
+    deskMins=dm; deskWeek=w;
+  }).catch(function(){});
+}
+function fmtTok(n){ return n>=1e6 ? (n/1e6).toFixed(1)+"M" : (n>=1e3 ? Math.round(n/1e3)+"k" : String(n)); }
+function deskRows(){
+  var out=[];
+  for(var k in deskWeek.proj) if(deskWeek.proj.hasOwnProperty(k)){
+    var th=T(k); out.push({name: th?th.n:(k.replace(/^\u00b7 /,"")+" (not linked to a thread)"), m:deskWeek.proj[k], t:th});
+  }
+  return out.sort(function(a,b){ return b.m-a.m; });
 }
 function localDay(){
   var d=new Date();
@@ -543,7 +571,7 @@ function drifting(){
     if(/parked/i.test(t.tag||"")) return false;
     if(t.who && t.since) return false;
     if(doDate(t)) return false;
-    if((mins[t.id]||0)>0) return false;
+    if(((mins[t.id]||0)+(deskMins[t.id]||0))>0) return false;
     if(isUnset(t)) return true;
     return stageIx(t) < stageCount(t)-1;
   });
@@ -604,7 +632,8 @@ function loadMine(force){
     return Promise.all(need.map(function(x){
       return gh("/issues/"+x.number+"/comments?per_page=100").then(function(cs){
         cs=cs||[];
-        var last=cs[cs.length-1];
+        var mine2=cs.filter(function(c){ return !(c.user && c.user.type==="Bot") && !/^@\S+ \u2713\u2713 Read\./.test(c.body||""); });
+        var last=mine2[mine2.length-1]||cs[cs.length-1];
         replies[x.number]={u:x.updated_at, text:firstLine(last&&last.body)};
       }).catch(function(){});
     }));
@@ -987,7 +1016,7 @@ function movedThisWeek(){
   return out;
 }
 function weekHours(){
-  var s=0; for(var k in mins) if(mins.hasOwnProperty(k)) s+=mins[k];
+  var s=deskWeek.min; for(var k in mins) if(mins.hasOwnProperty(k)) s+=mins[k];
   runIds().forEach(function(id){ s+=(Date.now()-running[id])/60000; });
   return s/60;
 }
@@ -1885,6 +1914,23 @@ function detailLook(d){
   var h1=el("div","mc"); h1.appendChild(el("b","num",a>=1?dur(a*60):"0m")); h1.appendChild(el("span","lab","tracked of 40h")); hrs.appendChild(h1);
   var mv=el("div","mc"); mv.appendChild(el("b","num",String(movedThisWeek().length))); mv.appendChild(el("span","lab","moves this week")); hrs.appendChild(mv);
   c5.appendChild(hrs);
+
+  var c7=lookCard(g,"Desktop work", "Claude Code, 7 days");
+  if(!deskWeek.n) c7.appendChild(el("p","note","No desktop sessions recorded yet. The hook records one line each time a Claude Code session on the PC ends."));
+  else {
+    c7.appendChild(el("p","big",dur(deskWeek.min)+" worked"));
+    var dm2=el("div","mini");
+    [[String(deskWeek.n),"sessions"],[fmtTok(deskWeek.tok),"tokens"]].forEach(function(x){ var c=el("div","mc"); c.appendChild(el("b","num",x[0])); c.appendChild(el("span","lab",x[1])); dm2.appendChild(c); });
+    c7.appendChild(dm2);
+    deskRows().slice(0,5).forEach(function(x){
+      var b=el(x.t?"button":"div","li"); if(x.t) b.type="button";
+      b.style.setProperty("--a",cvar(x.t?x.t.c:"--neutral"));
+      var r1=el("div","t1"); r1.appendChild(el("span","sw")); r1.appendChild(el("b","wrapall",x.name)); r1.appendChild(el("span","rt num",dur(x.m)));
+      b.appendChild(r1);
+      if(x.t) b.addEventListener("click",function(){ sel={kind:"domain",id:x.t.dom}; put(K.sel,sel); openThread(x.t.id); });
+      c7.appendChild(b);
+    });
+  }
 
   var c6=lookCard(g,"Your messages", null, goTo("inbox"));
   if(!mine){ c6.appendChild(el("p","note","Loading.")); if(!loadingMine){ loadingMine=true; loadMine(true).then(function(){ loadingMine=false; render(); }); } }
