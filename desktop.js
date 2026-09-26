@@ -11,7 +11,7 @@
 (function(){
 "use strict";
 
-var BUILD = "2026-09-26.2";   // bumped on every publish, checked against version.json
+var BUILD = "2026-09-26.3";   // bumped on every publish, checked against version.json
 var K = { tok:"planner.token", repo:"planner.repo", board:"planner.board",
           mins:"planner.mins", queue:"planner.queue", theme:"planner.theme",
           running:"planner.running", sel:"planner.sel", lang:"planner.lang" };
@@ -310,6 +310,7 @@ function pullDates(){
       var o=null; try{ o=JSON.parse(ln); }catch(e){ return; }
       if(!o||!o.thread) return;
       if(o["do"]) dates[o.thread]=o["do"]; else delete dates[o.thread];
+      if(o.drop) dropped[o.thread]=true; else if(o["do"]) delete dropped[o.thread];
     });
   });
 }
@@ -342,7 +343,7 @@ function waitingDays(t){
   return Math.max(0, Math.floor((Date.now()-d.getTime())/864e5));
 }
 function chaseAfter(t){ return typeof t.chaseAfter==="number" ? t.chaseAfter : 7; }
-function needsChase(t){ return !!(t.who && t.since && waitingDays(t)>=chaseAfter(t)); }
+function needsChase(t){ return !!(t.who && t.since && clockDays(t)>=chaseAfter(t)); }
 
 function loadIssues(){
   return gh("/issues?state=open&per_page=60&sort=created&direction=desc").then(function(r){
@@ -357,6 +358,8 @@ function flushQueue(){
   else if(item.kind==="status") p=appendLine("data/status.jsonl", item.line, "Stage set from the desktop");
   else if(item.kind==="plan")   p=appendLine("data/plan.jsonl", item.line, "Day assigned from the desktop");
   else if(item.kind==="date")   p=appendLine("data/dates.jsonl", item.line, "Do-date set from the desktop");
+  else if(item.kind==="tick")   p=appendLine("data/ticks.jsonl", item.line, "Ticked from the desktop");
+  else if(item.kind==="answer") p=appendLine("data/answers.jsonl", item.line, "Question answered from the desktop");
   else                        p=gh("/issues", {method:"POST", body:{title:item.title, body:item.body}});
   return p.then(function(){
     queue.shift(); put(K.queue,queue);
@@ -378,9 +381,218 @@ function sync(){
   if(!connected()){ stateMsg=""; render(); return Promise.resolve(); }
   busy=true; note("Syncing…");
   return flushQueue()
-    .then(pullBoard).then(pullStatus).then(pullPlan).then(pullDates).then(pullLog).then(loadIssues)
+    .then(pullBoard).then(pullStatus).then(pullPlan).then(pullDates).then(pullTicks).then(pullAnswers).then(pullLog).then(loadIssues)
+    .then(function(){ return loadMine(true); })
     .then(function(){ busy=false; lastSync=Date.now(); stateMsg=""; render(); })
     .catch(function(e){ busy=false; note(e.message,"bad"); render(); });
+}
+
+var WHERE="desktop";
+function afterWrite(msg){
+  note("Saving…"); render();
+  flushQueue().then(loadIssues).then(function(){ stateMsg = queue.length ? "Queued, no signal." : msg; mine=null; render(); })
+    .catch(function(e){ note(e.message,"bad"); });
+}
+
+/* ---------- ticks, answers, goals, chasing: the same in both apps ----------
+   data/ticks.jsonl    {thread, kind:"chase"|"step", day, at, via}  a chase restarts the clock
+   data/answers.jsonl  {q, a, at, via}                              one line per answered question
+   A tick or an answer can come from here or from a box ticked in the morning brief. */
+var ticks = [];
+var answers = {};
+var dropped = {};    // thread id -> true, dropped in a review; kept in data/dates.jsonl
+var qSkip = 0;       // "not now" moves to the next question for this session only
+function readLines(r){
+  var out=[];
+  if(!r||!r.content) return out;
+  b64d(r.content).split("\n").forEach(function(ln){
+    if(!ln.trim()) return;
+    try{ var o=JSON.parse(ln); if(o) out.push(o); }catch(e){}
+  });
+  return out;
+}
+function pullTicks(){
+  return gh("/contents/data/ticks.jsonl",{soft404:true}).then(function(r){ ticks=readLines(r); });
+}
+function pullAnswers(){
+  return gh("/contents/data/answers.jsonl",{soft404:true}).then(function(r){
+    answers={}; readLines(r).forEach(function(o){ if(o.q) answers[o.q]=o; });
+  });
+}
+function localDay(){
+  var d=new Date();
+  return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2);
+}
+function lastChase(t){
+  var best="";
+  ticks.forEach(function(k){
+    var d=k.day||(k.at||"").slice(0,10);
+    if(k.thread===t.id && k.kind==="chase" && d>best) best=d;
+  });
+  return best;
+}
+function clockDays(t){
+  var s=t.since||"", c=lastChase(t), from=c>s?c:s;
+  if(!from) return 0;
+  var d=new Date(from+"T00:00:00");
+  return isNaN(d.getTime()) ? 0 : Math.max(0, Math.floor((Date.now()-d.getTime())/864e5));
+}
+function waitList(){ return board.threads.filter(function(t){ return t.who && t.since; }); }
+function cleanWho(t){ return String(t.who||"").replace(/\s*\[[^\]]*\]/g,"").trim(); }
+function whoUnsure(t){ return /\[[^\]]*\]/.test(String(t.who||"")); }
+var MONTHS=["January","February","March","April","May","June","July","August","September","October","November","December"];
+function fmtDay(iso){
+  var d=new Date(String(iso).slice(0,10)+"T00:00:00");
+  return isNaN(d.getTime()) ? String(iso) : (d.getDate()+" "+MONTHS[d.getMonth()]);
+}
+function chaseDraft(t){
+  var when=t.since?fmtDay(t.since):"";
+  if(t.whoType==="journal")
+    return "Dear Editor,\n\nMay I ask for an update on the status of our manuscript"+(t.re?(", "+t.re):"")+
+           (when?(", submitted on "+when):"")+"?\n\nWith thanks,";
+  return "Dear "+cleanWho(t)+",\n\nA short note on "+(t.re||("“"+t.n+"”"))+
+         (when?(", which I sent on "+when):"")+". Is there anything you need from me to move it forward?\n\nWith thanks,";
+}
+function waitTone(t){
+  var d=clockDays(t), a=chaseAfter(t);
+  return d>=2*a ? "--bad" : (d>=a ? "--hot" : "--good");
+}
+function markChased(t){
+  var o={thread:t.id, kind:"chase", day:localDay(), at:new Date().toISOString(), via:WHERE};
+  ticks.push(o);
+  queue.push({kind:"tick", line:JSON.stringify(o)});
+  put(K.queue,queue); afterWrite("Chase recorded. The clock restarts today.");
+}
+function copyText(s, done){
+  try{
+    navigator.clipboard.writeText(s).then(function(){ done(true); }, function(){ done(false); });
+  }catch(e){ done(false); }
+}
+
+function qList(){
+  return (board.open||[]).map(function(q,i){
+    return typeof q==="string" ? {id:"q"+(i+1), q:q, opts:[]} : q;
+  });
+}
+function qText(q){ return typeof q==="string" ? q : (q&&q.q)||""; }
+function qLeft(){ return qList().filter(function(q){ return !answers[q.id]; }); }
+function epochDay(){ var d=new Date(); return Math.floor(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())/864e5); }
+/* The same pick as the morning brief: the day number modulo what is left. */
+function todaysQuestion(){
+  var l=qLeft();
+  return l.length ? l[(epochDay()+qSkip)%l.length] : null;
+}
+function qNumber(q){ var all=qList(); for(var i=0;i<all.length;i++) if(all[i].id===q.id) return i+1; return 0; }
+function answerQ(q, a){
+  var o={q:q.id, a:a, at:new Date().toISOString(), via:WHERE};
+  answers[q.id]=o; qSkip=0;
+  queue.push({kind:"answer", line:JSON.stringify(o)});
+  queue.push({kind:"issue", title:"Answer: "+q.q.slice(0,200),
+    body:a+"\n\n---\nAnswered in the Planner "+WHERE+", "+o.at+"."});
+  put(K.queue,queue); afterWrite("Answer filed.");
+}
+
+function shortName(t){ return t.short || String(t.n).split(/[,:(]/)[0].split(" ").slice(0,3).join(" "); }
+function goalSlots(g){
+  var feeding=board.threads.filter(function(t){ return t.goal===g.id; });
+  var reached=[], walking=[];
+  feeding.forEach(function(t){
+    var st=t.st||[], ci=g.counts?st.indexOf(g.counts):-1;
+    if(ci>=0 && !isUnset(t) && stageIx(t)>=ci) reached.push(t); else walking.push(t);
+  });
+  walking.sort(function(a,b){ return stageIx(b)-stageIx(a); });
+  var target=g.target||0, filled=Math.max(g.now||0, reached.length), earlier=filled-reached.length, tiles=[];
+  for(var i=0;i<target;i++){
+    if(i<earlier) tiles.push({s:"done", label:"Earlier"});
+    else if(i<filled){
+      var t=reached[i-earlier];
+      tiles.push({s: stageIx(t)<stageCount(t)-1 ? "review" : "done", label:shortName(t), t:t});
+    } else {
+      var w=walking[i-filled];
+      tiles.push({s: w?"walk":"empty", label: w?shortName(w):"", t:w});
+    }
+  }
+  var pace="";
+  if(g.by && filled<target){
+    var days=Math.round((new Date(g.by+"T00:00:00").getTime()-new Date(localDay()+"T00:00:00").getTime())/864e5);
+    if(days>0) pace=(target-filled)+" to go in "+days+" days. One every "+Math.max(1,Math.floor(days/(target-filled)))+" days.";
+  }
+  return {tiles:tiles, filled:filled, target:target, pace:pace};
+}
+
+function drifting(){
+  return board.threads.filter(function(t){
+    if(dropped[t.id]) return false;
+    if(t.dom==="teaching" || t.dom==="finance") return false;
+    if(/parked/i.test(t.tag||"")) return false;
+    if(t.who && t.since) return false;
+    if(doDate(t)) return false;
+    if((mins[t.id]||0)>0) return false;
+    if(isUnset(t)) return true;
+    return stageIx(t) < stageCount(t)-1;
+  });
+}
+/* The next day that has a working block on it, from tomorrow. */
+function nextWorkDay(){
+  for(var n=1;n<=7;n++){
+    var d=new Date(); d.setDate(d.getDate()+n);
+    var r=board.week[d.getDay()]||[];
+    for(var i=0;i<r.length;i++) if(r[i][6]) return dayOffset(n);
+  }
+  return dayOffset(1);
+}
+/* A review decision executes itself: a day, a delay or a drop is a line in
+   data/dates.jsonl. The summary goes to Claude as one issue when the review ends. */
+var reviewLog=[];
+function reviewDecide(t, what){
+  var iso = what==="start" ? dayOffset(0) : what==="day" ? nextWorkDay() : what==="delay" ? dayOffset(28) : null;
+  if(what==="drop"){
+    dropped[t.id]=true; delete dates[t.id];
+    queue.push({kind:"date", line:JSON.stringify({thread:t.id, "do":null, drop:true, at:new Date().toISOString()})});
+  } else {
+    dates[t.id]=iso;
+    queue.push({kind:"date", line:JSON.stringify({thread:t.id, "do":iso, why:what, at:new Date().toISOString()})});
+  }
+  reviewLog.push({t:t, what:what, iso:iso});
+  put(K.queue,queue); flushQueue();
+}
+function reviewFinish(){
+  if(!reviewLog.length) return;
+  var words={start:"Start it today", day:"Give it a day", delay:"Delay four weeks", drop:"Drop it"};
+  var body=reviewLog.map(function(r){ return "- "+r.t.n+": "+words[r.what]+(r.iso?(", "+r.iso):"")+"  `"+r.t.id+"`"; }).join("\n");
+  var n={}; reviewLog.forEach(function(r){ n[r.what]=(n[r.what]||0)+1; });
+  queue.push({kind:"issue", title:"Saturday review: "+reviewLog.length+" decided",
+    body:body+"\n\nThe days are already in data/dates.jsonl. A drop needs its project file moved, with the reason asked for if none was given."+
+         "\n\n---\nSent from the Planner "+WHERE+", "+new Date().toISOString()+"."});
+  reviewLog=[]; put(K.queue,queue); afterWrite("Review sent.");
+}
+
+/* Every message he sent, with the state he can read at a glance:
+   one tick sent, two blue ticks read and answered, two green ticks filed. */
+var mine=null, mineAt=0, replies={};
+function isBrief(x){ return (x.labels||[]).some(function(l){ return l && l.name==="brief"; }); }
+function firstLine(s){
+  s=String(s||"").split("\n---\n")[0];
+  var ls=s.split("\n").map(function(x){ return x.replace(/^[#>*\-\s]+/,"").trim(); }).filter(Boolean);
+  var t=ls[0]||"";
+  return t.length>160 ? t.slice(0,160)+"…" : t;
+}
+function msgState(x){ return x.state==="closed" ? "filed" : (x.comments>0 ? "seen" : "sent"); }
+function loadMine(force){
+  if(!token) return Promise.resolve();
+  if(!force && mine && Date.now()-mineAt<60000) return Promise.resolve();
+  return gh("/issues?state=all&per_page=25&sort=created&direction=desc").then(function(r){
+    mine=(r||[]).filter(function(x){ return !x.pull_request && !isBrief(x) && !(x.user && x.user.type==="Bot"); });
+    mineAt=Date.now();
+    var need=mine.filter(function(x){ return x.comments>0 && !(replies[x.number] && replies[x.number].u===x.updated_at); }).slice(0,10);
+    return Promise.all(need.map(function(x){
+      return gh("/issues/"+x.number+"/comments?per_page=100").then(function(cs){
+        cs=cs||[];
+        var last=cs[cs.length-1];
+        replies[x.number]={u:x.updated_at, text:firstLine(last&&last.body)};
+      }).catch(function(){});
+    }));
+  }).catch(function(){});
 }
 
 /* ---------- the week ---------- */
@@ -582,6 +794,7 @@ function startPath(node, leadText){
 
 /* ---------- render ---------- */
 function render(){
+  document.body.classList.toggle("look", sel.kind==="look");
   safe(paintRail); safe(paintList); safe(paintDetail); paintState();
 }
 
@@ -612,6 +825,7 @@ function paintRail(){
   }
   r.appendChild(el("div","railh lab","Day"));
   var chases=board.threads.filter(needsChase).length;
+  item("look","","One look",null,null,false,"layers");
   item("today","","Today",null, runIds().length||null, runIds().length>0, "clock");
   item("week","","The week",null,null,false,"calendar");
   item("review","","Weekly review",null, chases||null, chases>0, "check");
@@ -624,9 +838,9 @@ function paintRail(){
   });
 
   r.appendChild(el("div","railh lab","Everything else"));
-  item("inbox","","Inbox",null, issues?issues.length:null, issues&&issues.length>0, "inbox");
+  item("inbox","","Messages",null, issues?issues.length:null, issues&&issues.length>0, "inbox");
   item("goals","","The map",null,board.threads.length||null,false,"target");
-  item("open","","Waiting on you",null,(board.open||[]).length,false,"help");
+  item("open","","Questions",null,qLeft().length||null,false,"help");
   item("files","","Files",null,null,false,"folder");
 }
 
@@ -665,6 +879,8 @@ function paintList(){
     ts.forEach(function(t){ threadRow(n,t); });
     return;
   }
+  if(sel.kind==="look")   return;
+  if(sel.kind==="chase")  return listToday(n);
   if(sel.kind==="today")  return listToday(n);
   if(sel.kind==="review") return listReview(n);
   if(sel.kind==="week")   return listWeek(n);
@@ -682,21 +898,16 @@ function listToday(n){
     return;
   }
 
-  var chase = board.threads.filter(needsChase);
+  var tq=todaysQuestion();
+  if(tq){
+    n.appendChild(el("div","railh lab","One question, "+qNumber(tq)+" of "+qList().length));
+    n.appendChild(questionBox(tq, true));
+  }
+
+  var chase = board.threads.filter(needsChase).sort(function(a,b){ return clockDays(b)-clockDays(a); });
   if(chase.length){
     n.appendChild(el("div","railh lab","Chase, "+chase.length));
-    chase.forEach(function(t){
-      var b=el("button","li"); b.type="button";
-      b.style.setProperty("--a",cvar(t.c||domOf(t).c));
-      var r1=el("div","t1");
-      r1.appendChild(el("span","sw"));
-      r1.appendChild(el("b","wrapall",t.n));
-      r1.appendChild(el("span","rt num",waitingDays(t)+"d"));
-      b.appendChild(r1);
-      b.appendChild(el("div","t2","With "+t.who+" since "+t.since+". Nothing back."));
-      b.addEventListener("click",function(){ sel={kind:"domain",id:t.dom}; put(K.sel,sel); openThread(t.id); });
-      n.appendChild(b);
-    });
+    chase.forEach(function(t){ n.appendChild(chaseRow(t)); });
   }
 
   var buckets={overdue:[],today:[],week:[]};
@@ -764,18 +975,7 @@ function weekHours(){
   runIds().forEach(function(id){ s+=(Date.now()-running[id])/60000; });
   return s/60;
 }
-function driftingThreads(){
-  // no day, no hours, nobody holding it. Teaching and finance run on their own
-  // cadence and are never drifting, so they are not asked about.
-  return board.threads.filter(function(t){
-    if(t.dom==="teaching" || t.dom==="finance") return false;
-    if(t.who && t.since) return false;
-    if(doDate(t)) return false;
-    if((mins[t.id]||0)>0) return false;
-    if(isUnset(t)) return true;
-    return stageIx(t) < stageCount(t)-1;
-  });
-}
+function driftingThreads(){ return drifting(); }
 
 function listReview(n){
   listHead(n,"Weekly review", "Saturday");
@@ -840,7 +1040,35 @@ function detailReview(d){
 
   var drift=driftingThreads();
   if(drift.length){
+    var t0=drift[0], dm0=domOf(t0);
+    var s0=el("div","sec");
+    var hh=el("div","lh"); hh.appendChild(el("h3","lab","One at a time, "+drift.length+" left"));
+    hh.appendChild(el("span",null,"← drop   ↑ a day   ↓ delay   → start"));
+    s0.appendChild(hh);
+    var card=el("div","rvcard"); card.style.setProperty("--a",cvar(t0.c||dm0.c));
+    card.appendChild(el("div","lab",dm0?dm0.n:""));
+    card.appendChild(el("b","wrapall",t0.n));
+    card.appendChild(el("p","wrapall",(isUnset(t0)?"Stage not set":stageName(t0))+" → "+finalOf(t0)+(t0.tag?(" · "+t0.tag):"")));
+    if(t0.next) card.appendChild(el("p","wrapall","Next: "+t0.next));
+    s0.appendChild(card);
+    var rr=el("div","btnrow");
+    [["drop","← Drop","warn"],["day","↑ A day",""],["delay","↓ Delay four weeks",""],["start","Start →","pri"]].forEach(function(x){
+      var b=el("button","btn "+x[2],x[1]);
+      b.addEventListener("click",function(){ reviewDecide(t0,x[0]); render(); });
+      rr.appendChild(b);
+    });
+    s0.appendChild(rr);
+    d.appendChild(s0);
+  }
+  if(reviewLog.length){
+    var sr=el("div","btnrow");
+    var sd=el("button","btn pri","Send the review to Claude, "+reviewLog.length+" decided");
+    sd.addEventListener("click",function(){ reviewFinish(); });
+    sr.appendChild(sd); d.appendChild(sr);
+  }
+  if(drift.length){
     var s1=el("div","sec");
+
     var h1=el("div","lh");
     h1.appendChild(el("h3","lab","Drifting, "+drift.length));
     h1.appendChild(el("span",null,"no day, no hours, nobody holding it"));
@@ -867,7 +1095,7 @@ function detailReview(d){
     : "Nothing tracked this week. Either nothing was worked on, which is not true, or the timer is not being used."));
   d.appendChild(s2);
 
-  var q=board.open||[];
+  var q=qLeft();
   if(q.length){
     var s3=el("div","sec"); s3.appendChild(el("h3","lab","Questions waiting on you, "+q.length));
     q.forEach(function(x,i){
@@ -875,9 +1103,9 @@ function detailReview(d){
       var nb=el("span","num",String(i+1));
       nb.style.cssText="flex:none;width:18px;color:var(--faint);font-size:12px";
       r.appendChild(nb);
-      r.appendChild(el("span","p wrapall",x));
+      r.appendChild(el("span","p wrapall",x.q));
       var b=el("button","btn sm","Answer");
-      b.addEventListener("click",function(){ sel={kind:"open",id:String(i)}; put(K.sel,sel);
+      b.addEventListener("click",function(){ sel={kind:"open",id:x.id}; put(K.sel,sel);
         document.body.classList.add("detail-open"); render(); });
       r.appendChild(b);
       s3.appendChild(r);
@@ -937,22 +1165,29 @@ function listWeek(n){
 }
 
 function listInbox(n){
-  listHead(n,"Inbox", issues?(issues.length+" open"):"");
+  listHead(n,"Messages", issues?(issues.length+" open"):"");
   if(issuesErr){ n.appendChild(el("p","note bad wrapall",issuesErr)); return; }
-  if(!issues){ n.appendChild(emptyState("inbox", connected()?"Loading.":"Connect the repository and the inbox fills.")); return; }
-  if(!issues.length){ n.appendChild(emptyState("check","Nothing open. Everything you sent has been acted on and closed.")); return; }
-  issues.forEach(function(is){
-    var b=el("button","li"); b.type="button";
-    var r1=el("div","t1");
-    r1.appendChild(el("span","sw"));
-    r1.appendChild(el("b","wrapall",is.title));
-    r1.appendChild(el("span","rt","#"+is.number));
-    b.appendChild(r1);
-    b.appendChild(el("div","t2", ago(is.created_at)+" · "+(is.body||"").replace(/\s+/g," ").slice(0,90)));
-    b.addEventListener("click",function(){ sel={kind:"inbox",id:String(is.number)}; put(K.sel,sel);
-      document.body.classList.add("detail-open"); render(); });
+  if(!connected()){ n.appendChild(emptyState("inbox","Connect the repository and your messages appear.")); return; }
+  var key=el("p","tickkey");
+  key.appendChild(el("span","tk sent","✓")); key.appendChild(document.createTextNode(" sent  "));
+  key.appendChild(el("span","tk seen","✓✓")); key.appendChild(document.createTextNode(" read  "));
+  key.appendChild(el("span","tk filed","✓✓")); key.appendChild(document.createTextNode(" filed"));
+  n.appendChild(key);
+  queue.filter(function(q){ return q.kind==="issue"; }).forEach(function(q){
+    var b=el("div","li msg"); var r1=el("div","t1"); r1.appendChild(el("b","wrapall",q.title)); r1.appendChild(el("span","tk","⏱"));
+    b.appendChild(r1); b.appendChild(el("div","t2","Waiting for a connection")); n.appendChild(b);
+  });
+  (issues||[]).filter(isBrief).forEach(function(is){
+    var b=el("button","li"); b.type="button"; b.style.setProperty("--a","var(--accent)");
+    b.setAttribute("aria-current", (sel.kind==="inbox"&&sel.id===String(is.number))?"true":"false");
+    var r1=el("div","t1"); r1.appendChild(el("span","sw")); r1.appendChild(el("b","wrapall",is.title)); r1.appendChild(el("span","rt","brief"));
+    b.appendChild(r1); b.appendChild(el("div","t2","The morning brief. Tick its boxes on GitHub"));
+    b.addEventListener("click",function(){ sel={kind:"inbox",id:String(is.number)}; put(K.sel,sel); document.body.classList.add("detail-open"); render(); });
     n.appendChild(b);
   });
+  if(!mine){ n.appendChild(emptyState("inbox","Loading.")); if(!loadingMine){ loadingMine=true; loadMine(true).then(function(){ loadingMine=false; render(); }); } return; }
+  if(!mine.length){ n.appendChild(emptyState("check","Nothing sent yet.")); return; }
+  mine.forEach(function(x){ n.appendChild(msgRow(x)); });
 }
 
 function listGoals(n){
@@ -1031,16 +1266,19 @@ function detailMap(d){
 }
 
 function listOpen(n){
-  var q=board.open||[];
-  listHead(n,"Waiting on you", q.length?(q.length+" questions"):"nothing");
+  var q=qList(), left=qLeft();
+  listHead(n,"Questions", left.length?(left.length+" waiting, one a day"):"all answered");
   if(!q.length){ n.appendChild(emptyState("check","Nothing is waiting on a decision. The road ahead is yours.")); return; }
   q.forEach(function(x,i){
-    var b=el("button","li"); b.type="button";
+    var done=answers[x.id];
+    var b=el("button","li"+(done?" done":"")); b.type="button";
+    b.setAttribute("aria-current", sel.id===x.id?"true":"false");
+    b.style.setProperty("--a", done?"var(--good)":"var(--hot)");
     var r1=el("div","t1"); r1.appendChild(el("span","sw"));
-    r1.appendChild(el("b","wrapall",x)); r1.appendChild(el("span","rt",String(i+1)));
+    r1.appendChild(el("b","wrapall",x.q)); r1.appendChild(el("span","rt",String(i+1)));
     b.appendChild(r1);
-    b.appendChild(el("div","t2","Answer it and it becomes a decision"));
-    b.addEventListener("click",function(){ sel={kind:"open",id:String(i)}; put(K.sel,sel);
+    b.appendChild(el("div","t2 wrapall", done?("Answered: "+done.a):((x.opts||[]).map(function(o){ return o.a; }).join(" · ")||"Answer in words")));
+    b.addEventListener("click",function(){ sel={kind:"open",id:x.id}; put(K.sel,sel);
       document.body.classList.add("detail-open"); render(); });
     n.appendChild(b);
   });
@@ -1087,8 +1325,10 @@ function backBtn(d){
 function paintDetail(){
   var d=$("detail"); d.innerHTML="";
   if(file) return detailFile(d);
+  if(sel.kind==="look") return detailLook(d);
   if(sel.kind==="inbox" && sel.id) return detailIssue(d, Number(sel.id));
-  if(sel.kind==="open" && sel.id!=="") return detailQuestion(d, Number(sel.id));
+  if(sel.kind==="open" && sel.id!=="") return detailQuestion(d, sel.id);
+  if(sel.kind==="chase" && sel.id) return detailChase(d, T(sel.id));
   var t=selThread?T(selThread):null;
   if(!t){
     if(sel.kind==="today") return detailToday(d);
@@ -1188,17 +1428,17 @@ function detailToday(d){
     d.appendChild(s2);
   }
 
-  var q=board.open||[];
+  var q=qLeft();
   if(q.length){
     var s3=el("div","sec"); s3.appendChild(el("h3","lab","Waiting on you, "+q.length));
     q.slice(0,3).forEach(function(x,i){
       var r=el("div","file");
-      var nb=el("span","num",String(i+1));
+      var nb=el("span","num",String(qNumber(x)));
       nb.style.cssText="flex:none;width:18px;color:var(--faint);font-size:12px";
       r.appendChild(nb);
-      r.appendChild(el("span","p wrapall",x));
+      r.appendChild(el("span","p wrapall",x.q));
       var b=el("button","btn sm","Answer");
-      b.addEventListener("click",function(){ sel={kind:"open",id:String(i)}; put(K.sel,sel);
+      b.addEventListener("click",function(){ sel={kind:"open",id:x.id}; put(K.sel,sel);
         document.body.classList.add("detail-open"); render(); });
       r.appendChild(b);
       s3.appendChild(r);
@@ -1410,16 +1650,20 @@ function detailFile(d){
 
 function detailIssue(d,num){
   backBtn(d);
-  var is=null; (issues||[]).forEach(function(x){ if(x.number===num) is=x; });
-  if(!is){ d.appendChild(el("p","empty","That issue is not in the open list any more.")); return; }
+  var is=null; (issues||[]).concat(mine||[]).forEach(function(x){ if(x.number===num && !is) is=x; });
+  if(!is){ d.appendChild(el("p","empty","That message is not in the recent list any more.")); return; }
+  var stx=msgState(is);
+  d.appendChild(el("p","meta",{sent:"\u2713 Sent, not read yet",seen:"\u2713\u2713 Read and answered",filed:"\u2713\u2713 Filed"}[stx]));
+  if(replies[is.number] && replies[is.number].text) d.appendChild(el("p","reply wrapall",replies[is.number].text));
   d.appendChild(el("h2","wrapall",is.title));
   d.appendChild(el("p","meta","#"+is.number+" · opened "+ago(is.created_at)+(is.comments?(" · "+is.comments+" repl"+(is.comments===1?"y":"ies")):"")));
-  var p=el("p","kv wrapall"); p.style.whiteSpace="pre-wrap"; p.textContent=is.body||"";
+  var p=el("p","kv wrapall"); p.style.whiteSpace="pre-wrap"; p.textContent=(is.body||"").replace(/<!--[\s\S]*?-->/g,"").replace(/\*\*/g,"").replace(/^- \[ \] /gm,"\u2610 ").replace(/^- \[[xX]\] /gm,"\u2611 ");
   d.appendChild(p);
   var row=el("div","btnrow");
   var op=el("button","btn","Open on GitHub");
   op.addEventListener("click",function(){ window.open(is.html_url,"_blank","noopener"); });
   var cl=el("button","btn warn","Close it");
+  if(is.state==="closed") cl.style.display="none";
   cl.addEventListener("click",function(){ cl.textContent="Closing…";
     closeIssue(is.number).then(function(){ sel={kind:"inbox",id:""}; put(K.sel,sel); render(); })
       .catch(function(e){ note(e.message,"bad"); }); });
@@ -1427,29 +1671,226 @@ function detailIssue(d,num){
   d.appendChild(row);
 }
 
-function detailQuestion(d,ix){
+function detailQuestion(d,id){
   backBtn(d);
-  var q=(board.open||[])[ix];
+  var q=null; qList().forEach(function(x,i){ if(x.id===id || String(i)===String(id)) q=x; });
   if(!q){ d.appendChild(el("p","empty","No question there.")); return; }
-  d.appendChild(el("h2","wrapall",q));
-  d.appendChild(el("p","meta","Waiting on you"));
-  var s=el("div","sec"); s.appendChild(el("h3","lab","Answer it"));
+  d.appendChild(el("p","meta","Question "+qNumber(q)+" of "+qList().length));
+  d.appendChild(el("h2","wrapall",q.q));
+  if(q.why) d.appendChild(el("p","lead wrapall",q.why));
+  if(answers[q.id]) d.appendChild(el("p","kv wrapall","Answered: "+answers[q.id].a+", "+ago(answers[q.id].at)+"."));
+  d.appendChild(questionBox(q, false));
+  var s=el("div","sec"); s.appendChild(el("h3","lab","Or answer in your own words"));
   var ta=document.createElement("textarea");
-  ta.placeholder="Your answer. It goes in as a decision and Claude files it.";
+  ta.placeholder="Your answer. It is filed as the decision.";
   s.appendChild(ta);
   s.appendChild(micRow(ta));
   var row=el("div","btnrow");
-  var go=el("button","btn pri","Send the decision");
-  go.addEventListener("click",function(){
-    var v=ta.value.trim(); if(!v) return;
-    queue.push({kind:"issue", title:"Decision",
-      body:v+"\n\n---\nAnswering: "+q+"\nSent from the Planner desktop, "+new Date().toISOString()+"."});
-    put(K.queue,queue); ta.value=""; note("Sending…");
-    flushQueue().then(loadIssues).then(function(){ stateMsg="Sent."; render(); })
-      .catch(function(e){ note(e.message,"bad"); });
-  });
+  var go=el("button","btn pri","Send the answer");
+  go.addEventListener("click",function(){ var v=ta.value.trim(); if(!v) return; ta.value=""; answerQ(q, v); });
   row.appendChild(go); s.appendChild(row);
   d.appendChild(s);
+}
+function questionBox(q, compact){
+  var box=el("div","qbox"+(compact?" compact":""));
+  if(compact) box.appendChild(el("b","wrapall",q.q));
+  var row=el("div","qopts");
+  (q.opts||[]).forEach(function(op){
+    var b=el("button","btn "+(op.say?"":"pri"), op.a);
+    b.addEventListener("click",function(){
+      if(op.say){ sel={kind:"open",id:q.id}; put(K.sel,sel); document.body.classList.add("detail-open"); render(); return; }
+      answerQ(q, op.a);
+    });
+    row.appendChild(b);
+  });
+  if(!(q.opts||[]).length){
+    var w=el("button","btn pri","Answer in words");
+    w.addEventListener("click",function(){ sel={kind:"open",id:q.id}; put(K.sel,sel); document.body.classList.add("detail-open"); render(); });
+    row.appendChild(w);
+  }
+  if(compact && qLeft().length>1){
+    var nx=el("button","btn","Not now");
+    nx.addEventListener("click",function(){ qSkip++; render(); });
+    row.appendChild(nx);
+  }
+  box.appendChild(row);
+  return box;
+}
+
+/* ---------- chasing ---------- */
+function waitBarEl(t){
+  var bar=el("div","wbar");
+  bar.style.setProperty("--w", Math.min(100, Math.round(clockDays(t)/(2*chaseAfter(t))*100))+"%");
+  bar.style.setProperty("--a",cvar(waitTone(t)));
+  bar.appendChild(el("b")); bar.appendChild(el("i"));
+  return bar;
+}
+function chaseRow(t){
+  var b=el("button","li"); b.type="button";
+  b.setAttribute("aria-current", (sel.kind==="chase"&&sel.id===t.id)?"true":"false");
+  b.style.setProperty("--a",cvar(waitTone(t)));
+  var r1=el("div","t1");
+  r1.appendChild(el("span","sw"));
+  r1.appendChild(el("b","wrapall",t.n));
+  r1.appendChild(el("span","rt num",clockDays(t)+"/"+chaseAfter(t)+"d"));
+  b.appendChild(r1);
+  b.appendChild(el("div","t2","With "+cleanWho(t)+(lastChase(t)?(", chased "+fmtDay(lastChase(t))):"")));
+  var w=waitBarEl(t); w.style.margin="7px 0 2px 15px"; b.appendChild(w);
+  b.addEventListener("click",function(){ sel={kind:"chase",id:t.id}; put(K.sel,sel); selThread=""; document.body.classList.add("detail-open"); render(); });
+  return b;
+}
+function detailChase(d,t){
+  backBtn(d);
+  if(!t){ d.appendChild(el("p","empty","Nothing to chase there.")); return; }
+  d.appendChild(el("p","meta","With "+cleanWho(t)+" since "+fmtDay(t.since)+" · "+waitingDays(t)+" days"+(lastChase(t)?(" · last chased "+fmtDay(lastChase(t))):"")));
+  d.appendChild(el("h2","wrapall",t.n));
+  var w=waitBarEl(t); w.style.maxWidth="36rem"; w.style.marginTop="14px"; d.appendChild(w);
+  d.appendChild(el("p","kv",clockDays(t)+" days on the clock. Chase at "+chaseAfter(t)+", red at "+(2*chaseAfter(t))+"."));
+  var s=el("div","sec"); s.appendChild(el("h3","lab","The message, ready to send"));
+  var ta=document.createElement("textarea"); ta.className="draft"; ta.value=chaseDraft(t); ta.rows=8; ta.setAttribute("dir","auto");
+  s.appendChild(ta);
+  if(whoUnsure(t)) s.appendChild(el("p","note bad","The name was heard by voice. Check the spelling before you send."));
+  var row=el("div","btnrow");
+  var cp=el("button","btn pri","Copy message");
+  cp.addEventListener("click",function(){
+    copyText(ta.value,function(ok){
+      if(ok){ cp.textContent="Copied"; setTimeout(function(){ cp.textContent="Copy message"; },1600); }
+      else { ta.focus(); ta.select(); cp.textContent="Selected, press Ctrl+C"; }
+    });
+  });
+  var dn=withIcon(el("button","btn","I have chased"),"check");
+  dn.addEventListener("click",function(){ markChased(t); });
+  var op=el("button","btn","Open the path");
+  op.addEventListener("click",function(){ sel={kind:"domain",id:t.dom}; put(K.sel,sel); openThread(t.id); });
+  row.appendChild(cp); row.appendChild(dn); row.appendChild(op);
+  s.appendChild(row);
+  d.appendChild(s);
+}
+
+/* ---------- one look: everything on one screen ----------
+   Goals as tiles you can count, today and its one question, what is out of
+   your hands, the week as a strip, the review, and your last messages. Every
+   card opens the screen that owns it. */
+function lookCard(grid, title, sub, go, span){
+  var c=el("section","lcard"+(span?" span"+span:""));
+  var h=el("div","lch");
+  h.appendChild(el("h3","lab",title));
+  if(sub) h.appendChild(el("span","lcs",sub));
+  if(go){ var a=el("button","lgo","Open →"); a.addEventListener("click",go); h.appendChild(a); }
+  c.appendChild(h); grid.appendChild(c);
+  return c;
+}
+function goTo(kind,id){ return function(){ sel={kind:kind,id:id||""}; put(K.sel,sel); selThread=""; file=null; render(); }; }
+function weekDate(n){ var x=new Date(); x.setDate(x.getDate()+(n-x.getDay())); return x.getFullYear()+"-"+("0"+(x.getMonth()+1)).slice(-2)+"-"+("0"+x.getDate()).slice(-2); }
+function detailLook(d){
+  if(!connected()){
+    d.appendChild(el("h2",null,"One look"));
+    var s0=el("div","sec"); startPath(s0,"Connect the repository and everything appears here on one screen."); d.appendChild(s0);
+    return;
+  }
+  var hd=el("div","lookh");
+  hd.appendChild(el("h2",null,"One look"));
+  hd.appendChild(el("span","meta",FULL[new Date().getDay()]+" "+fmtDay(today())+" · board "+(board.updated||"")));
+  d.appendChild(hd);
+  if(board.headline) d.appendChild(el("p","lead wrapall",board.headline));
+  var g=el("div","lookgrid"); d.appendChild(g);
+
+  var gl=(board.goals||[]).filter(function(x){ return x.target; });
+  if(gl.length){
+    var c1=lookCard(g,"Goals","tap a tile",goTo("goals"),2);
+    var gg=el("div","ggrid"); c1.appendChild(gg);
+    gl.forEach(function(goal){
+      var gs=goalSlots(goal);
+      var row=el("div","grow2"); row.style.setProperty("--a",cvar(goal.c));
+      if(gs.target>5) row.style.gridColumn="1 / -1";
+      var top=el("div","gtop");
+      top.appendChild(el("b","wrapall",goal.n));
+      top.appendChild(el("span","gnum num",gs.filled+"/"+gs.target));
+      row.appendChild(top);
+      var tiles=el("div","slots"); tiles.style.gridTemplateColumns="repeat("+Math.min(gs.target,10)+",minmax(0,1fr))";
+      gs.tiles.forEach(function(tl){
+        var b=el(tl.t?"button":"div","slot "+tl.s); b.title=tl.t?tl.t.n:tl.label;
+        b.appendChild(el("span",null,tl.label));
+        if(tl.t) b.addEventListener("click",function(){ sel={kind:"domain",id:tl.t.dom}; put(K.sel,sel); openThread(tl.t.id); });
+        tiles.appendChild(b);
+      });
+      row.appendChild(tiles);
+      if(gs.pace) row.appendChild(el("p","pace",gs.pace));
+      gg.appendChild(row);
+    });
+  }
+
+  var c2=lookCard(g,"Today", FULL[new Date().getDay()], goTo("today"));
+  var cur=curBlock(), nx=nextBlock();
+  c2.appendChild(el("p","big wrapall", runIds().length ? ("Running: "+runIds().map(function(id){ var x=T(id); return x?x.n:id; }).join(", "))
+    : cur ? (cur.b[1]+", until "+hm(cur.b[5])) : (nx ? ("Next: "+nx[1]+" at "+hm(nx[4])) : "Nothing else scheduled today.")));
+  var bk={overdue:0,today:0}; board.threads.forEach(function(t){ var b=bucketOf(t); if(bk[b]!=null) bk[b]++; });
+  var mini=el("div","mini");
+  function mc(v,l,tone){ var x=el("div","mc"); var bb=el("b","num",v); if(tone) bb.style.color=cvar(tone); x.appendChild(bb); x.appendChild(el("span","lab",l)); mini.appendChild(x); }
+  var ch=board.threads.filter(needsChase).length;
+  mc(String(ch),"to chase", ch?"--hot":null); mc(String(bk.overdue),"late", bk.overdue?"--bad":null);
+  mc(String(bk.today),"on today"); mc(String(qLeft().length),"questions left");
+  c2.appendChild(mini);
+  var tq=todaysQuestion();
+  if(tq){ c2.appendChild(el("div","lab","One question, "+qNumber(tq)+" of "+qList().length)); c2.appendChild(questionBox(tq,true)); }
+
+  var ws=waitList().sort(function(a,b){ return clockDays(b)/chaseAfter(b)-clockDays(a)/chaseAfter(a); });
+  if(ws.length){
+    var c3=lookCard(g,"Out of your hands", ws.filter(needsChase).length+" to chase");
+    ws.forEach(function(t){ c3.appendChild(chaseRow(t)); });
+  }
+
+  var c4=lookCard(g,"The week", null, goTo("week"));
+  var strip=el("div","wstrip"), td=new Date().getDay(), holes=0, given=0;
+  for(var di=0;di<7;di++){
+    var col=el("div","wcol"+(di===td?" today":""));
+    col.appendChild(el("span","wd",DAYS[di]));
+    var dsx=weekDate(di);
+    (board.week[di]||[]).forEach(function(b,ix){
+      if(b[5]<=b[4]) return;
+      var who=b[6]?planned(dsx,ix):"", th=who?T(who):null;
+      var cell=el("i", b[6]?(th?"on":"hole"):"fixed");
+      cell.style.flexGrow=String(Math.max(1,Math.round((b[5]-b[4])/60)));
+      cell.title=b[0]+" "+b[1]+(th?(": "+th.n):(b[6]?": nothing on it":""));
+      if(th){ cell.style.background=cvar(th.c); given++; } else if(b[6]) holes++;
+      else cell.style.setProperty("--a",cvar(b[3]));
+      col.appendChild(cell);
+    });
+    strip.appendChild(col);
+  }
+  c4.appendChild(strip);
+  c4.appendChild(el("p","note",given+" working blocks have a thread, "+holes+" are empty. Striped means empty; faint is teaching and fixed time."));
+
+  var dr=drifting(), a=weekHours();
+  var c5=lookCard(g,"Saturday review", dr.length+" drifting", goTo("review"));
+  c5.appendChild(el("p","kv wrapall", dr.length ? (dr.length+" threads have no day, no hours and nobody holding them. Four keys settle each one.") : "Nothing is drifting."));
+  if(dr.length){ var rb=el("button","btn pri","Start the review"); rb.addEventListener("click",goTo("review")); c5.appendChild(rb); }
+  var hrs=el("div","mini"); hrs.style.marginTop="14px";
+  var h1=el("div","mc"); h1.appendChild(el("b","num",a>=1?dur(a*60):"0m")); h1.appendChild(el("span","lab","tracked of 40h")); hrs.appendChild(h1);
+  var mv=el("div","mc"); mv.appendChild(el("b","num",String(movedThisWeek().length))); mv.appendChild(el("span","lab","moves this week")); hrs.appendChild(mv);
+  c5.appendChild(hrs);
+
+  var c6=lookCard(g,"Your messages", null, goTo("inbox"));
+  if(!mine){ c6.appendChild(el("p","note","Loading.")); if(!loadingMine){ loadingMine=true; loadMine(true).then(function(){ loadingMine=false; render(); }); } }
+  else if(!mine.length) c6.appendChild(el("p","note","Nothing sent yet."));
+  else mine.slice(0,6).forEach(function(x){ c6.appendChild(msgRow(x)); });
+}
+var loadingMine=false;
+function msgRow(x){
+  var st=msgState(x);
+  var b=el("button","li msg"); b.type="button";
+  b.setAttribute("aria-current", (sel.kind==="inbox"&&sel.id===String(x.number))?"true":"false");
+  var r1=el("div","t1");
+  r1.appendChild(el("b","wrapall",x.title));
+  var tk=el("span","tk "+st, st==="sent"?"✓":"✓✓");
+  tk.title={sent:"Sent",seen:"Read and answered",filed:"Filed"}[st];
+  r1.appendChild(tk);
+  b.appendChild(r1);
+  var rp=replies[x.number];
+  b.appendChild(el("div","t2 wrapall", ago(x.created_at)+" · "+((rp&&rp.text)?((st==="filed"?"Filed: ":"Reply: ")+rp.text):({sent:"Sent, not read yet",seen:"Read",filed:"Filed"}[st]))));
+  b.addEventListener("click",function(){ sel={kind:"inbox",id:String(x.number)}; put(K.sel,sel);
+    document.body.classList.add("detail-open"); render(); });
+  return b;
 }
 
 /* ---------- command palette ---------- */
@@ -1640,6 +2081,11 @@ document.addEventListener("keydown",function(e){
   if(typing) return;
   if(e.key==="/"){ e.preventDefault(); openPalette(); }
   if(e.key==="r") sync();
+  if(sel.kind==="review" && !selThread && !file){
+    var dir={ArrowLeft:"drop",ArrowRight:"start",ArrowUp:"day",ArrowDown:"delay"}[e.key];
+    var dl=dir?drifting():[];
+    if(dir && dl.length){ e.preventDefault(); reviewDecide(dl[0],dir); render(); return; }
+  }
   if((e.key==="[" || e.key==="]") && !file && selThread){
     var t=T(selThread);
     if(t && stageCount(t)){

@@ -232,7 +232,7 @@ textarea{min-height:160px;resize:vertical;overflow-wrap:anywhere}
 select{appearance:none}
 .microw{display:flex;align-items:center;gap:16px;margin-top:20px}
 .rec{flex:none;width:60px;height:60px;border-radius:50%;display:flex;align-items:center;
-  justify-content:center;font-size:1.4rem;background:var(--sink)}
+  justify-content:center;font-size:1.5rem;background:var(--accent);box-shadow:0 6px 18px color-mix(in srgb,var(--accent) 35%,transparent)}
 .rec.on{background:var(--bad);color:#fff;animation:pp 1.2s ease-in-out infinite}
 .microw .hint{flex:1;min-width:0;font-size:.88rem;color:var(--ink2);line-height:1.4}
 .lang{flex:none;min-height:44px;padding:0 16px;border-radius:22px;background:var(--sink);
@@ -277,6 +277,96 @@ nav button[aria-current="page"]{color:var(--accent)}
 .shh b{display:block;margin-top:3px;font-size:1.5rem;font-weight:700;line-height:1.2;letter-spacing:-.03em}
 .shx{flex:none;width:42px;height:42px;border-radius:50%;background:var(--sink);
   display:flex;align-items:center;justify-content:center;font-size:1rem;color:var(--dim)}
+
+/* the question of the day: the answers are the buttons */
+.qcard{padding-top:22px}
+.qcard .kicker{color:var(--a)}
+.qq{margin:0;font-size:1.35rem;line-height:1.3;font-weight:700;letter-spacing:-.025em}
+.opts{display:grid;grid-template-columns:repeat(auto-fit,minmax(9rem,1fr));gap:10px;margin-top:16px}
+.opt{min-height:54px;padding:10px 14px;border-radius:14px;background:var(--a,var(--accent));color:#fff;
+  font-weight:650;font-size:.98rem;text-align:center;line-height:1.25}
+.qcard .opt{background:var(--a)}
+.opt.say{background:var(--sink);color:var(--ink)}
+.sh .opt{background:var(--accent)} .sh .opt.say{background:var(--sink);color:var(--ink)}
+.qnext{display:block;margin-top:12px;font-size:.86rem;color:var(--dim);text-decoration:underline;text-underline-offset:3px}
+
+/* chasing: the clock, the bar, the message ready to copy */
+.chase .thh b{display:block;font-size:1.05rem;font-weight:600;line-height:1.3}
+.chase .sub{display:block;font-size:.86rem;color:var(--dim);margin-top:3px}
+.chase .chip{background:color-mix(in srgb,var(--a) 18%,transparent);color:var(--a);font-weight:700}
+.wbar{position:relative;height:6px;border-radius:3px;background:var(--sink);margin-top:12px;overflow:hidden}
+.wbar i{position:absolute;inset:0 auto 0 0;width:var(--w);background:var(--a);border-radius:3px}
+.wbar b{position:absolute;top:0;bottom:0;width:2px;background:var(--bg);z-index:1}
+.draft{display:block;width:100%;margin-top:14px;padding:12px 14px;border-radius:12px;border:1px dashed var(--hair);
+  background:var(--sink);color:var(--ink);font-size:.92rem;line-height:1.5;resize:vertical;min-height:10.5rem}
+.chase .thb button.go{background:var(--accent)}
+
+/* goals as tiles you can count */
+.goal .thh b{font-size:1.02rem;font-weight:600;line-height:1.3}
+.gnum{flex:none;font-size:1.5rem;font-weight:700;letter-spacing:-.03em;color:var(--a)}
+.slots{display:grid;gap:7px;margin-top:14px}
+.slot{min-height:3.4rem;overflow:hidden;border-radius:10px;padding:6px 7px;display:flex;align-items:flex-end;
+  overflow-wrap:break-word;word-break:normal;hyphens:auto;font-size:.7rem;line-height:1.2;font-weight:600;text-align:left;color:var(--dim);
+  box-shadow:inset 0 0 0 1.5px var(--hair)}
+.slot.empty{box-shadow:inset 0 0 0 1.5px var(--hair);opacity:.6}
+.slot.walk{box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--a) 55%,transparent);border-style:dashed;color:var(--ink2)}
+.slot.done{background:var(--a);color:#fff;box-shadow:none}
+.slot.review{background:color-mix(in srgb,var(--hot) 22%,transparent);color:var(--ink);box-shadow:inset 0 0 0 1.5px var(--hot)}
+.pace{margin:10px 0 0;font-size:.9rem;font-weight:600;color:var(--ink2)}
+
+/* out of your hands */
+.wrow{display:block;width:100%;padding:12px 0;border-top:1px solid var(--hair)}
+.wrow:first-of-type{border-top:none}
+.wtop{display:flex;justify-content:space-between;gap:12px;align-items:baseline}
+.wtop .nm{font-weight:600;font-size:.98rem;line-height:1.3;min-width:0}
+.wtop .val{flex:none;font-size:.82rem;font-weight:700;color:var(--a)}
+.wsub{display:block;font-size:.84rem;color:var(--dim);margin-top:2px}
+.wrow .wbar{margin-top:8px}
+
+/* the week in one strip */
+.wstrip{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;margin-top:6px}
+.wcol{display:flex;flex-direction:column;gap:4px;min-height:7rem;padding:6px 4px;border-radius:10px;align-items:stretch}
+.wcol.today{background:var(--sink)}
+.wcol .wd{text-align:center;font-size:.72rem;font-weight:700;color:var(--dim);margin-bottom:2px}
+.wcol.today .wd{color:var(--accent)}
+.wcol i{display:block;min-height:10px;border-radius:4px;flex-basis:0}
+.wcol i.hole{box-shadow:inset 0 0 0 1.5px var(--hair);background:repeating-linear-gradient(135deg,transparent 0 4px,var(--hair) 4px 5px)}
+
+/* Saturday review */
+.review .kicker{color:var(--a)}
+.rvsh{min-height:78dvh}
+.rvdirs{display:flex;justify-content:space-between;font-size:.74rem;font-weight:700;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--dim);margin-top:8px}
+.rvdirs.one{justify-content:center;margin-top:12px}
+.rvstack{position:relative;margin-top:12px;min-height:15rem}
+.rvcard{position:relative;z-index:2;border-radius:20px;padding:20px 18px;background:var(--raise);
+  border:1px solid var(--hair);box-shadow:0 10px 28px rgba(0,0,0,.18);touch-action:none;user-select:none;
+  min-height:15rem;cursor:grab}
+.rvcard.behind{position:absolute;inset:0;z-index:1;transform:translateY(10px) scale(.95);opacity:.5;box-shadow:none}
+.rvcard .kicker{color:var(--a)}
+.rvt{display:block;font-size:1.45rem;line-height:1.2;font-weight:700;letter-spacing:-.025em}
+.rvn{margin:12px 0 0;font-size:.95rem;color:var(--ink2);line-height:1.45}
+.stamp{position:absolute;top:16px;right:16px;padding:3px 10px;border-radius:8px;font-weight:800;font-size:.85rem;
+  letter-spacing:.08em;border:2px solid currentColor;transform:rotate(8deg);color:var(--dim)}
+.stamp:empty{display:none}
+.stamp.drop{color:var(--bad)} .stamp.start{color:var(--good)} .stamp.day{color:var(--accent)} .stamp.delay{color:var(--hot)}
+.rvbtns{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:16px}
+.rvb{min-height:50px;border-radius:14px;text-align:center;font-weight:700;font-size:.9rem;background:var(--sink)}
+.rvb.drop{color:var(--bad)} .rvb.start{background:var(--good);color:#fff} .rvb.day{color:var(--accent)} .rvb.delay{color:var(--hot)}
+
+/* your messages, with ticks */
+.tickkey{margin-top:0;white-space:pre-wrap}
+.bub{display:block;width:100%;margin-top:10px;padding:11px 14px;border-radius:16px 16px 5px 16px;
+  background:var(--sink);text-align:left}
+.bub b{display:block;font-size:.95rem;font-weight:600;line-height:1.35}
+.bub .bt{display:block;font-size:.88rem;color:var(--ink2);margin-top:3px;line-height:1.4}
+.bub .meta{display:flex;justify-content:flex-end;align-items:center;gap:4px;font-size:.74rem;color:var(--dim);margin-top:5px}
+.tk{font-weight:800;letter-spacing:-.18em;color:var(--dim)}
+.tk.seen{color:var(--accent)}
+.tk.filed{color:var(--good)}
+.rep2{margin:6px 0 0 18px;padding:9px 13px;border-radius:16px 16px 16px 5px;border:1px solid var(--hair);font-size:.88rem;line-height:1.45;color:var(--ink2)}
+.rep2 b{display:block;font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;color:var(--good);margin-bottom:2px}
+@media (prefers-reduced-motion:reduce){ .rvcard{transition:none!important} }
 </style>
 </head>
 <body>
@@ -305,6 +395,6 @@ nav button[aria-current="page"]{color:var(--accent)}
 </nav>
 
 <div id="sheet"></div>
-<script src="app.js?v=12"></script>
+<script src="app.js?v=13"></script>
 </body>
 </html>

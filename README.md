@@ -106,6 +106,35 @@ something to chase. A journal gets a longer window than a person.
 
 Neither is guessed. Both are written down only when you say them.
 
+## Each signal on its own channel
+
+- **The notification** carries the numbers in its title, so the lock screen
+  alone says the day: `Chase 2 · <who> 12 days`.
+- **The reminder** is the morning message itself. Every line is a checkbox.
+  Ticking one in the GitHub app is the reply; a workflow in the private
+  repository files it into `data/ticks.jsonl` within a minute. A chase tick
+  restarts that item's chase clock.
+- **One question a day** arrives in the same message with its answers as
+  boxes, and sits at the top of NOW with its answers as buttons. Both pick the
+  same question: the day number modulo the questions still open. An answer is
+  a line in `data/answers.jsonl` and an issue, so it is filed like anything
+  else.
+- **Chasing** shows each waiting item as a bar that turns amber at the chase
+  limit and red at twice it, with a short message already drafted to copy. The
+  draft is built at runtime from the board; nothing about anyone is in this
+  repository.
+- **Messages carry ticks**: one for sent, two blue once answered, two green
+  once filed, with the reply's first line under the message.
+- **Goals are tiles**: ten slots for ten papers, filled when an item reaches
+  the stage the goal counts, amber while under review, with the pace needed
+  when a goal has an end date.
+- **Saturday is a swipe**: one drifting item at a time, left to drop, right to
+  start, up for the next working day, down to delay four weeks. Each decision
+  is a line in `data/dates.jsonl`; the whole review reaches Claude as one
+  message. On the desktop the arrow keys do the same.
+- **One look**, the first item on the desktop and the MAP tab on the phone,
+  puts all of it on one screen.
+
 ## The weekly review
 
 One view that asks what gives: what moved this week, what is stuck with
