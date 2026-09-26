@@ -11,7 +11,7 @@
 (function(){
 "use strict";
 
-var BUILD = "2026-09-26.6";   // bumped on every publish, checked against version.json
+var BUILD = "2026-09-26.7";   // bumped on every publish, checked against version.json
 var K = { tok:"planner.token", repo:"planner.repo", board:"planner.board",
           mins:"planner.mins", queue:"planner.queue", theme:"planner.theme",
           running:"planner.running", sel:"planner.sel", lang:"planner.lang" };
@@ -377,6 +377,7 @@ function flushQueue(){
   else if(item.kind==="tick")   p=appendLine("data/ticks.jsonl", item.line, "Ticked from the desktop");
   else if(item.kind==="answer") p=appendLine("data/answers.jsonl", item.line, "Question answered from the desktop");
   else if(item.kind==="added")  p=appendLine("data/added.jsonl", item.line, "Added from the desktop");
+  else if(item.kind==="link")   p=appendLine("desktop/links.jsonl", item.line, "Folder linked from the desktop");
   else                        p=gh("/issues", {method:"POST", body:{title:item.title, body:item.body}});
   return p.then(function(){
     queue.shift(); put(K.queue,queue);
@@ -437,24 +438,56 @@ function pullAnswers(){
   });
 }
 /* Desktop work: one line per local Claude Code session, written by the hook in
-   the private repository. Active minutes and tokens only; never content. */
-var deskMins={}, deskWeek={min:0, n:0, tok:0, proj:{}};
+   the private repository. Active minutes and tokens only; never content.
+   Folder names rarely match project names, so a folder is linked to its
+   project once, with one tap, in desktop/links.jsonl; every session from that
+   folder, past and future, then counts toward that project. */
+var deskMins={}, deskWeek={min:0, n:0, tok:0, proj:{}}, deskRaw=[], links={}, unlinked=[];
 function pullDesk(){
-  return gh("/contents/desktop/sessions.jsonl",{soft404:true}).then(function(r){
-    var cut=Date.now()-7*864e5, dm={}, w={min:0, n:0, tok:0, proj:{}};
-    readLines(r).forEach(function(o){
-      if(o.active_minutes==null) return;
-      var at=new Date(o.start||o.ts).getTime();
-      if(!(at>=cut)) return;
-      var m=Number(o.active_minutes)||0, tk=o.tokens||{}, t=0;
-      for(var k in tk) if(tk.hasOwnProperty(k)) t+=Number(tk[k])||0;
-      w.min+=m; w.n++; w.tok+=t;
-      var key=o.thread||("\u00b7 "+(o.project||"unknown"));
-      w.proj[key]=(w.proj[key]||0)+m;
-      if(o.thread) dm[o.thread]=(dm[o.thread]||0)+m;
-    });
-    deskMins=dm; deskWeek=w;
+  return Promise.all([
+    gh("/contents/desktop/sessions.jsonl",{soft404:true}),
+    gh("/contents/desktop/links.jsonl",{soft404:true})
+  ]).then(function(rs){
+    deskRaw=readLines(rs[0]);
+    links={}; readLines(rs[1]).forEach(function(l){ if(l.folder) links[String(l.folder).toLowerCase()]={thread:l.thread||null}; });
+    deskCompute();
   }).catch(function(){});
+}
+function deskThread(o){
+  if(o.thread) return o.thread;
+  var l=links[String(o.folder||o.project||"").toLowerCase()];
+  return l ? l.thread : undefined;          // undefined: not linked yet; null: not a project
+}
+function deskCompute(){
+  var cut=Date.now()-7*864e5, cut2=Date.now()-21*864e5, dm={}, w={min:0, n:0, tok:0, proj:{}}, un={};
+  deskRaw.forEach(function(o){
+    if(o.active_minutes==null) return;
+    var at=new Date(o.start||o.ts).getTime(), m=Number(o.active_minutes)||0, th=deskThread(o);
+    var folder=o.folder||o.project||"unknown";
+    if(th===undefined && at>=cut2){
+      var u=un[folder]||(un[folder]={folder:folder, min:0, n:0, cand:{}, last:0});
+      u.min+=m; u.n++; u.last=Math.max(u.last,at);
+      (o.candidates||[]).forEach(function(c){ u.cand[c]=1; });
+    }
+    if(!(at>=cut)) return;
+    var tk=o.tokens||{}, t=0;
+    for(var k in tk) if(tk.hasOwnProperty(k)) t+=Number(tk[k])||0;
+    w.min+=m; w.n++; w.tok+=t;
+    var key=th||("\u00b7 "+folder);
+    w.proj[key]=(w.proj[key]||0)+m;
+    if(th) dm[th]=(dm[th]||0)+m;
+  });
+  deskMins=dm; deskWeek=w;
+  unlinked=Object.keys(un).map(function(k){ var u=un[k]; u.cand=Object.keys(u.cand); return u; })
+    .sort(function(a,b){ return b.last-a.last; });
+}
+function linkFolder(folder, threadId){
+  var o={folder:folder, thread:threadId||null, at:new Date().toISOString(), via:WHERE};
+  links[String(folder).toLowerCase()]={thread:o.thread};
+  queue.push({kind:"link", line:JSON.stringify(o)});
+  put(K.queue,queue); deskCompute();
+  var t=threadId?T(threadId):null;
+  afterWrite(t ? ("Folder "+folder+" now counts toward "+t.n+".") : ("Folder "+folder+" is not counted as a project."));
 }
 function fmtTok(n){ return n>=1e6 ? (n/1e6).toFixed(1)+"M" : (n>=1e3 ? Math.round(n/1e3)+"k" : String(n)); }
 function deskRows(){
@@ -997,6 +1030,10 @@ function listToday(n){
     return;
   }
 
+  if(unlinked.length){
+    n.appendChild(el("div","railh lab","Desktop folders to link, "+unlinked.length));
+    unlinked.slice(0,4).forEach(function(u){ n.appendChild(linkBox(u)); });
+  }
   var tq=todaysQuestion();
   if(tq){
     n.appendChild(el("div","railh lab","One question, "+qNumber(tq)+" of "+qList().length));
@@ -1921,6 +1958,29 @@ function lookCard(grid, title, sub, go, span){
 }
 function goTo(kind,id){ return function(){ sel={kind:kind,id:id||""}; put(K.sel,sel); selThread=""; file=null; render(); }; }
 function weekDate(n){ var x=new Date(); x.setDate(x.getDate()+(n-x.getDay())); return x.getFullYear()+"-"+("0"+(x.getMonth()+1)).slice(-2)+"-"+("0"+x.getDate()).slice(-2); }
+function linkBox(u){
+  var box=el("div","qbox compact");
+  box.appendChild(el("b","wrapall","Folder \u201C"+u.folder+"\u201D, "+dur(u.min)+" in "+u.n+" session"+(u.n===1?"":"s")+". Which project?"));
+  var row=el("div","qopts");
+  u.cand.slice(0,3).forEach(function(id){
+    var t=T(id); if(!t) return;
+    var b=el("button","btn pri",t.n); b.addEventListener("click",function(){ linkFolder(u.folder,id); }); row.appendChild(b);
+  });
+  var sel2=document.createElement("select");
+  var o0=el("option",null,"Another project\u2026"); o0.value=""; sel2.appendChild(o0);
+  domains().forEach(function(d){
+    var ts=threadsIn(d.id); if(!ts.length) return;
+    var gpp=document.createElement("optgroup"); gpp.label=d.n;
+    ts.forEach(function(t){ var o=el("option",null,t.n); o.value=t.id; gpp.appendChild(o); });
+    sel2.appendChild(gpp);
+  });
+  sel2.addEventListener("change",function(){ if(sel2.value) linkFolder(u.folder, sel2.value); });
+  sel2.style.maxWidth="15rem";
+  row.appendChild(sel2);
+  var no=el("button","btn","Not a project"); no.addEventListener("click",function(){ linkFolder(u.folder,null); }); row.appendChild(no);
+  box.appendChild(row);
+  return box;
+}
 function detailLook(d){
   if(!connected()){
     d.appendChild(el("h2",null,"One look"));
@@ -2010,6 +2070,7 @@ function detailLook(d){
   c5.appendChild(hrs);
 
   var c7=lookCard(g,"Desktop work", "Claude Code, 7 days");
+  unlinked.slice(0,4).forEach(function(u){ c7.appendChild(linkBox(u)); });
   if(!deskWeek.n) c7.appendChild(el("p","note","No desktop sessions recorded yet. The hook records one line each time a Claude Code session on the PC ends."));
   else {
     c7.appendChild(el("p","big",dur(deskWeek.min)+" worked"));

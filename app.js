@@ -6,7 +6,7 @@
 var K    = { tok:"planner.token", repo:"planner.repo", board:"planner.board", focus:"planner.focus",
              mins:"planner.mins", queue:"planner.queue", lang:"planner.lang", theme:"planner.theme",
              running:"planner.running" };
-var BUILD = "2026-09-26.6";   // bumped on every publish, checked against version.json
+var BUILD = "2026-09-26.7";   // bumped on every publish, checked against version.json
 function REPO(){ return getRaw(K.repo) || ""; }
 function API(){ return "https://api.github.com/repos/" + REPO(); }
 
@@ -239,6 +239,7 @@ function flushQueue(){
         : item.kind==="tick"   ? appendLine("data/ticks.jsonl", item.line, "Ticked from the phone")
         : item.kind==="answer" ? appendLine("data/answers.jsonl", item.line, "Question answered from the phone")
         : item.kind==="added"  ? appendLine("data/added.jsonl", item.line, "Added from the phone")
+        : item.kind==="link"   ? appendLine("desktop/links.jsonl", item.line, "Folder linked from the phone")
         : gh("/issues", {method:"POST", body:{title:item.title, body:item.body}});
   return p.then(function(){
     queue.shift(); put(K.queue,queue);
@@ -290,24 +291,56 @@ function pullAnswers(){
   });
 }
 /* Desktop work: one line per local Claude Code session, written by the hook in
-   the private repository. Active minutes and tokens only; never content. */
-var deskMins={}, deskWeek={min:0, n:0, tok:0, proj:{}};
+   the private repository. Active minutes and tokens only; never content.
+   Folder names rarely match project names, so a folder is linked to its
+   project once, with one tap, in desktop/links.jsonl; every session from that
+   folder, past and future, then counts toward that project. */
+var deskMins={}, deskWeek={min:0, n:0, tok:0, proj:{}}, deskRaw=[], links={}, unlinked=[];
 function pullDesk(){
-  return gh("/contents/desktop/sessions.jsonl",{soft404:true}).then(function(r){
-    var cut=Date.now()-7*864e5, dm={}, w={min:0, n:0, tok:0, proj:{}};
-    readLines(r).forEach(function(o){
-      if(o.active_minutes==null) return;
-      var at=new Date(o.start||o.ts).getTime();
-      if(!(at>=cut)) return;
-      var m=Number(o.active_minutes)||0, tk=o.tokens||{}, t=0;
-      for(var k in tk) if(tk.hasOwnProperty(k)) t+=Number(tk[k])||0;
-      w.min+=m; w.n++; w.tok+=t;
-      var key=o.thread||("\u00b7 "+(o.project||"unknown"));
-      w.proj[key]=(w.proj[key]||0)+m;
-      if(o.thread) dm[o.thread]=(dm[o.thread]||0)+m;
-    });
-    deskMins=dm; deskWeek=w;
+  return Promise.all([
+    gh("/contents/desktop/sessions.jsonl",{soft404:true}),
+    gh("/contents/desktop/links.jsonl",{soft404:true})
+  ]).then(function(rs){
+    deskRaw=readLines(rs[0]);
+    links={}; readLines(rs[1]).forEach(function(l){ if(l.folder) links[String(l.folder).toLowerCase()]={thread:l.thread||null}; });
+    deskCompute();
   }).catch(function(){});
+}
+function deskThread(o){
+  if(o.thread) return o.thread;
+  var l=links[String(o.folder||o.project||"").toLowerCase()];
+  return l ? l.thread : undefined;          // undefined: not linked yet; null: not a project
+}
+function deskCompute(){
+  var cut=Date.now()-7*864e5, cut2=Date.now()-21*864e5, dm={}, w={min:0, n:0, tok:0, proj:{}}, un={};
+  deskRaw.forEach(function(o){
+    if(o.active_minutes==null) return;
+    var at=new Date(o.start||o.ts).getTime(), m=Number(o.active_minutes)||0, th=deskThread(o);
+    var folder=o.folder||o.project||"unknown";
+    if(th===undefined && at>=cut2){
+      var u=un[folder]||(un[folder]={folder:folder, min:0, n:0, cand:{}, last:0});
+      u.min+=m; u.n++; u.last=Math.max(u.last,at);
+      (o.candidates||[]).forEach(function(c){ u.cand[c]=1; });
+    }
+    if(!(at>=cut)) return;
+    var tk=o.tokens||{}, t=0;
+    for(var k in tk) if(tk.hasOwnProperty(k)) t+=Number(tk[k])||0;
+    w.min+=m; w.n++; w.tok+=t;
+    var key=th||("\u00b7 "+folder);
+    w.proj[key]=(w.proj[key]||0)+m;
+    if(th) dm[th]=(dm[th]||0)+m;
+  });
+  deskMins=dm; deskWeek=w;
+  unlinked=Object.keys(un).map(function(k){ var u=un[k]; u.cand=Object.keys(u.cand); return u; })
+    .sort(function(a,b){ return b.last-a.last; });
+}
+function linkFolder(folder, threadId){
+  var o={folder:folder, thread:threadId||null, at:new Date().toISOString(), via:WHERE};
+  links[String(folder).toLowerCase()]={thread:o.thread};
+  queue.push({kind:"link", line:JSON.stringify(o)});
+  put(K.queue,queue); deskCompute();
+  var t=threadId?T(threadId):null;
+  afterWrite(t ? ("Folder "+folder+" now counts toward "+t.n+".") : ("Folder "+folder+" is not counted as a project."));
 }
 function fmtTok(n){ return n>=1e6 ? (n/1e6).toFixed(1)+"M" : (n>=1e3 ? Math.round(n/1e3)+"k" : String(n)); }
 function deskRows(){
@@ -790,6 +823,7 @@ function vNow(m){
 
   var qq=todaysQuestion();
   if(qq) m.appendChild(questionCard(qq));
+  unlinked.slice(0,3).forEach(function(u){ m.appendChild(linkCard(u)); });
 
   var chase=board.threads.filter(needsChase);
   if(chase.length){
@@ -925,6 +959,37 @@ function questionCard(q){
     c.appendChild(nx);
   }
   return c;
+}
+function linkCard(u){
+  var c=band("qcard","--accent");
+  kicker(c,"Desktop work \u00b7 which project?");
+  c.appendChild(el("p","qq any","Folder \u201C"+u.folder+"\u201D"));
+  var n=el("p","note any",dur(u.min)+" worked in "+u.n+" session"+(u.n===1?"":"s")+". Tap its project once; every session in this folder counts toward it from then on, the past ones too.");
+  n.style.marginTop="6px"; c.appendChild(n);
+  var o=el("div","opts");
+  u.cand.slice(0,3).forEach(function(id){
+    var t=T(id); if(!t) return;
+    var b=el("button","opt",t.n); b.addEventListener("click",function(){ linkFolder(u.folder,id); }); o.appendChild(b);
+  });
+  var other=el("button","opt say","Another project"); other.addEventListener("click",function(){ linkSheet(u); }); o.appendChild(other);
+  var no=el("button","opt say","Not a project"); no.addEventListener("click",function(){ linkFolder(u.folder,null); }); o.appendChild(no);
+  c.appendChild(o);
+  return c;
+}
+function linkSheet(u){
+  sheet(function(sh){
+    shHead(sh,"Folder "+u.folder,"Which project is it?");
+    domains().forEach(function(d){
+      var ts=threadsIn(d.id); if(!ts.length) return;
+      sh.appendChild(sech(d.n));
+      ts.forEach(function(t){
+        var b=el("button","row"); b.style.setProperty("--a","var("+(t.c||d.c)+")");
+        b.appendChild(el("span","dot")); b.appendChild(el("span","nm any",t.n));
+        b.addEventListener("click",function(){ closeSheet(); linkFolder(u.folder,t.id); });
+        sh.appendChild(b);
+      });
+    });
+  });
 }
 function questionSheet(q){
   sheet(function(sh){
