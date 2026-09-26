@@ -11,7 +11,7 @@
 (function(){
 "use strict";
 
-var BUILD = "2026-09-26.3";   // bumped on every publish, checked against version.json
+var BUILD = "2026-09-26.4";   // bumped on every publish, checked against version.json
 var K = { tok:"planner.token", repo:"planner.repo", board:"planner.board",
           mins:"planner.mins", queue:"planner.queue", theme:"planner.theme",
           running:"planner.running", sel:"planner.sel", lang:"planner.lang" };
@@ -96,6 +96,22 @@ var LANGS = [["ar-SA","عربي"],["en-GB","English"]];
 var langIx = get(K.lang,0);
 var rec=null, recLive=false;
 
+/* Android returns dictation cumulatively: "just", "just 123", "just 123 test",
+   each as its own result. Desktop Chrome returns separate phrases. Joining them
+   blindly repeated every word on the phone, so a result that restates what came
+   before replaces it instead of adding to it. */
+function joinResults(results){
+  var out="";
+  for(var i=0;i<results.length;i++){
+    var t=results[i][0].transcript||"";
+    var a=out.trim().toLowerCase(), b=t.trim().toLowerCase();
+    if(!b) continue;
+    if(a && b.indexOf(a)===0){ out=t; continue; }
+    if(a && a.length>=b.length && a.slice(-b.length)===b) continue;
+    out += (out && !/\s$/.test(out) && !/^\s/.test(t)) ? " "+t : t;
+  }
+  return out.replace(/\s+/g," ").trim();
+}
 function micRow(ta){
   var row=el("div","microw");
   var btn=el("button","mic"); btn.type="button";
@@ -119,7 +135,7 @@ function micRow(ta){
     r.lang=LANGS[langIx][0]; r.continuous=true; r.interimResults=true;
     r.onresult=function(ev){
       var all="";
-      for(var i=0;i<ev.results.length;i++) all += ev.results[i][0].transcript;
+      all = joinResults(ev.results);
       ta.value = base + all;
     };
     r.onerror=function(ev){
