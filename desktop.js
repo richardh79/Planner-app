@@ -11,7 +11,7 @@
 (function(){
 "use strict";
 
-var BUILD = "2026-09-26.5";   // bumped on every publish, checked against version.json
+var BUILD = "2026-09-26.6";   // bumped on every publish, checked against version.json
 var K = { tok:"planner.token", repo:"planner.repo", board:"planner.board",
           mins:"planner.mins", queue:"planner.queue", theme:"planner.theme",
           running:"planner.running", sel:"planner.sel", lang:"planner.lang" };
@@ -263,7 +263,7 @@ function pullBoard(){
   return gh("/contents/data/board.json", {soft404:true}).then(function(r){
     if(!r||!r.content) return null;
     var j=JSON.parse(b64d(r.content));
-    if(j && j.threads && j.week){ board=j; put(K.board,j); }
+    if(j && j.threads && j.week){ board=j; put(K.board,j); mergeAdded(); }
     return j;
   });
 }
@@ -376,6 +376,7 @@ function flushQueue(){
   else if(item.kind==="date")   p=appendLine("data/dates.jsonl", item.line, "Do-date set from the desktop");
   else if(item.kind==="tick")   p=appendLine("data/ticks.jsonl", item.line, "Ticked from the desktop");
   else if(item.kind==="answer") p=appendLine("data/answers.jsonl", item.line, "Question answered from the desktop");
+  else if(item.kind==="added")  p=appendLine("data/added.jsonl", item.line, "Added from the desktop");
   else                        p=gh("/issues", {method:"POST", body:{title:item.title, body:item.body}});
   return p.then(function(){
     queue.shift(); put(K.queue,queue);
@@ -397,7 +398,7 @@ function sync(){
   if(!connected()){ stateMsg=""; render(); return Promise.resolve(); }
   busy=true; note("Syncing…");
   return flushQueue()
-    .then(pullBoard).then(pullStatus).then(pullPlan).then(pullDates).then(pullTicks).then(pullAnswers).then(pullDesk).then(pullLog).then(loadIssues)
+    .then(pullBoard).then(pullStatus).then(pullPlan).then(pullDates).then(pullTicks).then(pullAnswers).then(pullDesk).then(pullAdded).then(pullLog).then(loadIssues)
     .then(function(){ return loadMine(true); })
     .then(function(){ busy=false; lastSync=Date.now(); stateMsg=""; render(); })
     .catch(function(e){ busy=false; note(e.message,"bad"); render(); });
@@ -462,6 +463,51 @@ function deskRows(){
     var th=T(k); out.push({name: th?th.n:(k.replace(/^\u00b7 /,"")+" (not linked to a thread)"), m:deskWeek.proj[k], t:th});
   }
   return out.sort(function(a,b){ return b.m-a.m; });
+}
+/* Adding from the app. board.json is generated, so a new item is not written
+   into it: it is a line in data/added.jsonl, merged into the board here at
+   once, and filed properly by Claude at the next session (project file, goal,
+   board). The same line also arrives as an issue so it is not missed. */
+var added = get("planner.added", []);
+setTimeout(mergeAdded,0);   // the cached board, before the network answers
+function mergeAdded(){
+  (added||[]).forEach(function(a){ if(a && a.id && !T(a.id)) board.threads.push(a); });
+}
+function pullAdded(){
+  return gh("/contents/data/added.jsonl",{soft404:true}).then(function(r){
+    var list=readLines(r).filter(function(a){ return a && a.id && a.n; }), have={};
+    list.forEach(function(a){ have[a.id]=1; });
+    queue.forEach(function(q){        // added offline and not sent yet: keep it
+      if(q.kind!=="added") return;
+      try{ var a=JSON.parse(q.line); if(a && a.id && !have[a.id]){ list.push(a); have[a.id]=1; } }catch(e){}
+    });
+    added=list; put("planner.added", added); mergeAdded();
+  }).catch(function(){});
+}
+function slug(s){ return String(s).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,24)||"item"; }
+/* The stages most used in that category, so a new paper walks like the other papers. */
+function stagesFor(dom){
+  var n={}, best=null, bn=0;
+  board.threads.forEach(function(t){
+    if(t.dom!==dom || !(t.st||[]).length) return;
+    var k=JSON.stringify(t.st); n[k]=(n[k]||0)+1;
+    if(n[k]>bn){ bn=n[k]; best=t.st; }
+  });
+  return best ? best.slice() : ["Not started","Running","Done"];
+}
+function addThread(o){
+  var dm=null; domains().forEach(function(d){ if(d.id===o.dom) dm=d; });
+  var t={ id: slug(o.n)+"-"+Date.now().toString(36).slice(-4), n:o.n.trim(), dom:o.dom||"",
+          c:(dm&&dm.c)||"--neutral", st:stagesFor(o.dom), at:0, tag:"New", next:(o.next||"").trim(),
+          goal:o.goal||"", added:new Date().toISOString(), via:WHERE };
+  if(o.who){ t.who=o.who.trim(); t.since=localDay(); }
+  added.push(t); put("planner.added", added); board.threads.push(t);
+  queue.push({kind:"added", line:JSON.stringify(t)});
+  queue.push({kind:"issue", title:"New thread: "+t.n,
+    body:"Added from the app"+(dm?(" under "+dm.n):"")+"."+(t.next?("\n\nNext: "+t.next):"")+(t.who?("\n\nWith "+t.who+" from today."):"")+
+         "\n\nFile it: project file, goal, and board.json.\n\n---\nThread: `"+t.id+"` \u2014 "+t.n+"\nSent from the Planner "+WHERE+", "+t.added+"."});
+  put(K.queue,queue); afterWrite("Added.");
+  return t;
 }
 function localDay(){
   var d=new Date();
@@ -876,6 +922,11 @@ function paintRail(){
   item("review","","Weekly review",null, chases||null, chases>0, "check");
 
   r.appendChild(el("div","railh lab","Categories"));
+  var add=el("button","ri"); add.type="button";
+  var pic=icon("plus"); if(pic){ pic.style.color="var(--accent)"; add.appendChild(pic); }
+  add.appendChild(el("span","nm","Add something new"));
+  add.addEventListener("click",function(){ addModal(sel.kind==="domain"?sel.id:""); });
+  r.appendChild(add);
   domains().forEach(function(d){
     var ts=threadsIn(d.id);
     var liveN=ts.filter(function(t){ return isOn(t.id); }).length;
@@ -920,6 +971,9 @@ function paintList(){
     var d=null; domains().forEach(function(x){ if(x.id===sel.id) d=x; });
     var ts=threadsIn(sel.id);
     listHead(n, d?d.n:"Threads", ts.length+(domMins(sel.id)>=1?(" · "+dur(domMins(sel.id))+" this week"):""));
+    var ab=withIcon(el("button","btn sm addbtn","Add to "+(d?d.n:"this category")),"plus");
+    ab.addEventListener("click",function(){ addModal(sel.id); });
+    n.appendChild(ab);
     if(!ts.length){ n.appendChild(emptyState("layers","No path in this category yet.")); return; }
     ts.forEach(function(t){ threadRow(n,t); });
     return;
@@ -1187,6 +1241,46 @@ function decide(d, t){
   });
   cd.appendChild(row);
   ov.appendChild(cd); h.appendChild(ov);
+}
+
+function addModal(dom){
+  var h=$("modal"); h.innerHTML="";
+  var ov=el("div","modal");
+  ov.addEventListener("click",function(e){ if(e.target===ov) h.innerHTML=""; });
+  var cd=el("div","cd");
+  cd.appendChild(el("h3","lab","Add something new"));
+  function fld(label,node){ var w=el("div","afld"); w.appendChild(el("label","lab",label)); w.appendChild(node); cd.appendChild(w); return node; }
+  var nm=document.createElement("input"); nm.type="text"; nm.setAttribute("dir","auto");
+  nm.placeholder="What is it? A paper, a patent, a course, anything";
+  fld("What",nm);
+  var sd=document.createElement("select");
+  domains().forEach(function(x){ var o=el("option",null,x.n); o.value=x.id; if(x.id===dom) o.selected=true; sd.appendChild(o); });
+  fld("Category",sd);
+  var sg=document.createElement("select");
+  var o0=el("option",null,"No goal"); o0.value=""; sg.appendChild(o0);
+  (board.goals||[]).forEach(function(g){ var o=el("option",null,g.n); o.value=g.id; sg.appendChild(o); });
+  function guess(){ var hit=""; board.threads.forEach(function(t){ if(!hit && t.dom===sd.value && t.goal) hit=t.goal; }); sg.value=hit; }
+  sd.addEventListener("change",guess); guess();
+  fld("Counts toward",sg);
+  var nx=document.createElement("input"); nx.type="text"; nx.setAttribute("dir","auto"); nx.placeholder="The next physical step (optional)";
+  fld("Next step",nx);
+  var wh=document.createElement("input"); wh.type="text"; wh.setAttribute("dir","auto"); wh.placeholder="Only if someone else is holding it now";
+  fld("With whom",wh);
+  cd.appendChild(micRow(nm));
+  var msg=el("p","note");
+  var row=el("div","btnrow");
+  var go=el("button","btn pri","Add it");
+  go.addEventListener("click",function(){
+    var v=nm.value.trim();
+    if(!v){ msg.className="note bad"; msg.textContent="Give it a name first."; nm.focus(); return; }
+    var t=addThread({n:v, dom:sd.value, goal:sg.value, next:nx.value, who:wh.value});
+    h.innerHTML=""; sel={kind:"domain",id:t.dom}; put(K.sel,sel); openThread(t.id);
+  });
+  var cx=el("button","btn","Cancel"); cx.addEventListener("click",function(){ h.innerHTML=""; });
+  row.appendChild(go); row.appendChild(cx); cd.appendChild(row); cd.appendChild(msg);
+  cd.appendChild(el("p","note","It appears straight away and can be started, dated and chased. Claude files it properly at the next session."));
+  ov.appendChild(cd); h.appendChild(ov);
+  setTimeout(function(){ try{ nm.focus(); }catch(e){} },40);
 }
 
 function listWeek(n){

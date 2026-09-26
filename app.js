@@ -6,7 +6,7 @@
 var K    = { tok:"planner.token", repo:"planner.repo", board:"planner.board", focus:"planner.focus",
              mins:"planner.mins", queue:"planner.queue", lang:"planner.lang", theme:"planner.theme",
              running:"planner.running" };
-var BUILD = "2026-09-26.5";   // bumped on every publish, checked against version.json
+var BUILD = "2026-09-26.6";   // bumped on every publish, checked against version.json
 function REPO(){ return getRaw(K.repo) || ""; }
 function API(){ return "https://api.github.com/repos/" + REPO(); }
 
@@ -103,7 +103,7 @@ function pullBoard(){
   return gh("/contents/data/board.json", {soft404:true}).then(function(r){
     if(!r||!r.content) return null;
     var j = JSON.parse(b64d(r.content));
-    if(j && j.threads && j.week){ board=j; put(K.board,j); }
+    if(j && j.threads && j.week){ board=j; put(K.board,j); mergeAdded(); }
     return j;
   });
 }
@@ -238,6 +238,7 @@ function flushQueue(){
         : item.kind==="date"   ? appendLine("data/dates.jsonl", item.line, "Do-date set from the phone")
         : item.kind==="tick"   ? appendLine("data/ticks.jsonl", item.line, "Ticked from the phone")
         : item.kind==="answer" ? appendLine("data/answers.jsonl", item.line, "Question answered from the phone")
+        : item.kind==="added"  ? appendLine("data/added.jsonl", item.line, "Added from the phone")
         : gh("/issues", {method:"POST", body:{title:item.title, body:item.body}});
   return p.then(function(){
     queue.shift(); put(K.queue,queue);
@@ -315,6 +316,51 @@ function deskRows(){
     var th=T(k); out.push({name: th?th.n:(k.replace(/^\u00b7 /,"")+" (not linked to a thread)"), m:deskWeek.proj[k], t:th});
   }
   return out.sort(function(a,b){ return b.m-a.m; });
+}
+/* Adding from the app. board.json is generated, so a new item is not written
+   into it: it is a line in data/added.jsonl, merged into the board here at
+   once, and filed properly by Claude at the next session (project file, goal,
+   board). The same line also arrives as an issue so it is not missed. */
+var added = get("planner.added", []);
+setTimeout(mergeAdded,0);   // the cached board, before the network answers
+function mergeAdded(){
+  (added||[]).forEach(function(a){ if(a && a.id && !T(a.id)) board.threads.push(a); });
+}
+function pullAdded(){
+  return gh("/contents/data/added.jsonl",{soft404:true}).then(function(r){
+    var list=readLines(r).filter(function(a){ return a && a.id && a.n; }), have={};
+    list.forEach(function(a){ have[a.id]=1; });
+    queue.forEach(function(q){        // added offline and not sent yet: keep it
+      if(q.kind!=="added") return;
+      try{ var a=JSON.parse(q.line); if(a && a.id && !have[a.id]){ list.push(a); have[a.id]=1; } }catch(e){}
+    });
+    added=list; put("planner.added", added); mergeAdded();
+  }).catch(function(){});
+}
+function slug(s){ return String(s).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,24)||"item"; }
+/* The stages most used in that category, so a new paper walks like the other papers. */
+function stagesFor(dom){
+  var n={}, best=null, bn=0;
+  board.threads.forEach(function(t){
+    if(t.dom!==dom || !(t.st||[]).length) return;
+    var k=JSON.stringify(t.st); n[k]=(n[k]||0)+1;
+    if(n[k]>bn){ bn=n[k]; best=t.st; }
+  });
+  return best ? best.slice() : ["Not started","Running","Done"];
+}
+function addThread(o){
+  var dm=null; domains().forEach(function(d){ if(d.id===o.dom) dm=d; });
+  var t={ id: slug(o.n)+"-"+Date.now().toString(36).slice(-4), n:o.n.trim(), dom:o.dom||"",
+          c:(dm&&dm.c)||"--neutral", st:stagesFor(o.dom), at:0, tag:"New", next:(o.next||"").trim(),
+          goal:o.goal||"", added:new Date().toISOString(), via:WHERE };
+  if(o.who){ t.who=o.who.trim(); t.since=localDay(); }
+  added.push(t); put("planner.added", added); board.threads.push(t);
+  queue.push({kind:"added", line:JSON.stringify(t)});
+  queue.push({kind:"issue", title:"New thread: "+t.n,
+    body:"Added from the app"+(dm?(" under "+dm.n):"")+"."+(t.next?("\n\nNext: "+t.next):"")+(t.who?("\n\nWith "+t.who+" from today."):"")+
+         "\n\nFile it: project file, goal, and board.json.\n\n---\nThread: `"+t.id+"` \u2014 "+t.n+"\nSent from the Planner "+WHERE+", "+t.added+"."});
+  put(K.queue,queue); afterWrite("Added.");
+  return t;
 }
 function localDay(){
   var d=new Date();
@@ -1243,6 +1289,10 @@ function vThreads(m){
     board.threads.forEach(function(t){ w0.appendChild(threadCard(t)); });
     m.appendChild(w0); return;
   }
+  var addB=el("button","wide ghost","+ Add something new");
+  addB.style.marginTop="4px";
+  addB.addEventListener("click",function(){ addSheet(openDom||""); });
+  m.appendChild(addB);
   var wrapS=el("div"); wrapS.style.marginTop="2px";
   doms.forEach(function(dm){
     var ts=threadsIn(dm.id);
@@ -1259,7 +1309,12 @@ function vThreads(m){
     head.appendChild(el("span","chip"+(live?"":" quiet"), open?"hide":"open"));
     head.addEventListener("click",function(){ openDom = open?"":dm.id; render(); });
     wrapS.appendChild(head);
-    if(open) ts.forEach(function(t){ wrapS.appendChild(threadCard(t)); });
+    if(open){
+      ts.forEach(function(t){ wrapS.appendChild(threadCard(t)); });
+      var ah=el("button","addhere","+ Add to "+dm.n);
+      ah.addEventListener("click",function(){ addSheet(dm.id); });
+      wrapS.appendChild(ah);
+    }
   });
   m.appendChild(wrapS);
 }
@@ -1288,6 +1343,43 @@ function threadCard(t){
   bts.appendChild(go); bts.appendChild(sp); bts.appendChild(mo);
   c.appendChild(bts);
   return c;
+}
+
+/* ---------- add ---------- */
+function addSheet(dom){
+  sheet(function(sh){
+    shHead(sh,"Add","Something new");
+    function fld(label, node){ var f=el("div","fld"); f.appendChild(el("label","tag",label)); f.appendChild(node); sh.appendChild(f); return node; }
+    var nm=document.createElement("input"); nm.type="text"; nm.id="addname"; nm.setAttribute("dir","auto");
+    nm.placeholder="What is it? A paper, a patent, a course, anything";
+    fld("What", nm);
+    var sd=el("select"); sd.id="adddom";
+    domains().forEach(function(d){ var o=el("option",null,d.n); o.value=d.id; if(d.id===dom) o.selected=true; sd.appendChild(o); });
+    fld("Category", sd);
+    var sg=el("select"); sg.id="addgoal";
+    var o0=el("option",null,"No goal"); o0.value=""; sg.appendChild(o0);
+    (board.goals||[]).forEach(function(g){ var o=el("option",null,g.n); o.value=g.id; sg.appendChild(o); });
+    function guessGoal(){ var hit=""; board.threads.forEach(function(t){ if(!hit && t.dom===sd.value && t.goal) hit=t.goal; }); sg.value=hit; }
+    sd.addEventListener("change",guessGoal); guessGoal();
+    fld("Counts toward", sg);
+    var nx=document.createElement("input"); nx.type="text"; nx.id="addnext"; nx.setAttribute("dir","auto");
+    nx.placeholder="The next physical step (optional)";
+    fld("Next step", nx);
+    var wh=document.createElement("input"); wh.type="text"; wh.id="addwho"; wh.setAttribute("dir","auto");
+    wh.placeholder="Only if someone else is holding it now";
+    fld("With whom", wh);
+    var go=el("button","wide","Add it"); go.style.marginTop="22px";
+    var msg=el("p","note");
+    go.addEventListener("click",function(){
+      var n=nm.value.trim();
+      if(!n){ msg.className="note bad"; msg.textContent="Give it a name first."; nm.focus(); return; }
+      var t=addThread({n:n, dom:sd.value, goal:sg.value, next:nx.value, who:wh.value});
+      openDom=t.dom; closeSheet(); view="threads"; render();
+    });
+    sh.appendChild(go); sh.appendChild(msg);
+    sh.appendChild(el("p","note","It appears straight away and can be started, dated and chased. Claude files it properly at the next session."));
+    setTimeout(function(){ try{ nm.focus(); }catch(e){} }, 60);
+  });
 }
 
 /* ---------- say ---------- */
@@ -1742,6 +1834,7 @@ function settings(){
         .then(function(){ return pullTicks(); })
         .then(function(){ return pullAnswers(); })
         .then(function(){ return pullDesk(); })
+        .then(function(){ return pullAdded(); })
         .then(function(){ return pullLog(); })
         .then(function(){
           $("setst").textContent="Connected. Board synced."; $("setst").className="note ok";
@@ -1836,7 +1929,7 @@ if(token){
   flushQueue();
   pullBoard()
     .then(function(j){ if(j){ syncMsg="synced"; render(); } })
-    .then(pullStatus).then(pullPlan).then(pullDates).then(pullTicks).then(pullAnswers).then(pullDesk).then(render)
+    .then(pullStatus).then(pullPlan).then(pullDates).then(pullTicks).then(pullAnswers).then(pullDesk).then(pullAdded).then(render)
     .catch(function(e){ syncMsg=e.message; render(); });
   pullLog().then(render).catch(function(){});
 }
