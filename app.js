@@ -6,7 +6,7 @@
 var K    = { tok:"planner.token", repo:"planner.repo", board:"planner.board", focus:"planner.focus",
              mins:"planner.mins", queue:"planner.queue", lang:"planner.lang", theme:"planner.theme",
              running:"planner.running" };
-var BUILD = "2026-09-26.1";   // bumped on every publish, checked against version.json
+var BUILD = "2026-09-26.2";   // bumped on every publish, checked against version.json
 function REPO(){ return getRaw(K.repo) || ""; }
 function API(){ return "https://api.github.com/repos/" + REPO(); }
 
@@ -288,6 +288,7 @@ function isUnset(t){ return !!t.unset && !statuses[t.id]; }
 function finalOf(t){ var st=t.st||[]; return t.final || st[st.length-1] || ""; }
 function walked(t){ var last=stageCount(t)-1; if(last<1) return 0; return Math.round(stageIx(t)/last*100); }
 function setStage(t, ix){
+  if(statuses[t.id] && statuses[t.id].stage===ix) return;   // a second tap is not a second update
   var label=(t.st||[])[ix]||"";
   statuses[t.id]={thread:t.id, stage:ix, label:label, at:new Date().toISOString()};
   queue.push({kind:"status", line:JSON.stringify(statuses[t.id])});
@@ -324,15 +325,25 @@ function alignment(){
 }
 
 /* ---------- tracking ---------- */
+/* A timer left running is the commonest lie in the log: three ran for a week.
+   Anything over twelve hours asks what was real, and an empty answer drops it. */
+function realMinutes(m){
+  if(m<=720) return m;
+  var a=null;
+  try{ a=window.prompt("This timer ran "+Math.round(m/60)+" hours. How many minutes did you actually work? Leave it empty to drop it.",""); }catch(e){}
+  var n=parseInt(a,10);
+  return (n>0 && n<=720) ? n : 0;
+}
 function startFocus(id){
   if(isOn(id)) return;
+  runningIds().forEach(function(x){ stopFocus(x); });   // one block, one thread: starting one ends the other
   running[id]=Date.now(); put(K.running,running); render();
 }
 
 function stopFocus(id){
   if(id==null){ runningIds().forEach(function(x){ stopFocus(x); }); return; }
   if(!isOn(id)) return;
-  var at=running[id], m=Math.round((Date.now()-at)/60000);
+  var at=running[id], m=realMinutes(Math.round((Date.now()-at)/60000));
   delete running[id]; put(K.running,running);
   mins[id]=(mins[id]||0)+m; put(K.mins,mins);
   if(m>=1){

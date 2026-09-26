@@ -11,7 +11,7 @@
 (function(){
 "use strict";
 
-var BUILD = "2026-09-26.1";   // bumped on every publish, checked against version.json
+var BUILD = "2026-09-26.2";   // bumped on every publish, checked against version.json
 var K = { tok:"planner.token", repo:"planner.repo", board:"planner.board",
           mins:"planner.mins", queue:"planner.queue", theme:"planner.theme",
           running:"planner.running", sel:"planner.sel", lang:"planner.lang" };
@@ -396,13 +396,23 @@ function nextBlock(){
 }
 
 /* ---------- actions ---------- */
+/* A timer left running is the commonest lie in the log: three ran for a week.
+   Anything over twelve hours asks what was real, and an empty answer drops it. */
+function realMinutes(m){
+  if(m<=720) return m;
+  var a=null;
+  try{ a=window.prompt("This timer ran "+Math.round(m/60)+" hours. How many minutes did you actually work? Leave it empty to drop it.",""); }catch(e){}
+  var n=parseInt(a,10);
+  return (n>0 && n<=720) ? n : 0;
+}
 function start(id){
   if(isOn(id)) return;
+  runIds().forEach(function(x){ stop(x); });   // one block, one thread: starting one ends the other
   running[id]=Date.now(); put(K.running,running); render();
 }
 function stop(id){
   if(!isOn(id)) return;
-  var at=running[id], m=Math.round((Date.now()-at)/60000);
+  var at=running[id], m=realMinutes(Math.round((Date.now()-at)/60000));
   delete running[id]; put(K.running,running);
   if(m>=1){
     mins[id]=(mins[id]||0)+m; put(K.mins,mins);
@@ -415,6 +425,7 @@ function stop(id){
   render();
 }
 function setStage(t, ix){
+  if(statuses[t.id] && statuses[t.id].stage===ix) return;   // a second tap is not a second update
   var line=JSON.stringify({thread:t.id, stage:ix, label:(t.st||[])[ix]||"", at:new Date().toISOString()});
   statuses[t.id]={thread:t.id, stage:ix, label:(t.st||[])[ix]||"", at:new Date().toISOString()};
   queue.push({kind:"status", line:line});
