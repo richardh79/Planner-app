@@ -90,6 +90,38 @@ Open `<your pages url>/desktop.html`. In Chrome or Edge, the install button in
 the address bar turns it into a desktop app in its own window. The phone app is
 untouched: two manifests, two installs, one set of data.
 
+## Dates, and the chase rule
+
+Two additions that make a daily list possible.
+
+**A do-date on an item.** Not a deadline, which the planner refuses to invent.
+The day you mean to touch it, yours to move. Set it from the item, and the
+choice is written to `data/dates.jsonl`, append-only like the rest. Today then
+buckets everything into late, on today and this week.
+
+**A chase rule.** An item can carry `who` and `since`: the person or journal
+holding it and the date it left your hands. Once it has been waiting longer
+than `chaseAfter` days, seven by default, it appears at the top of Today as
+something to chase. A journal gets a longer window than a person.
+
+Neither is guessed. Both are written down only when you say them.
+
+## The weekly review
+
+One view that asks what gives: what moved this week, what is stuck with
+someone, how many hours were tracked against capacity, and what is drifting
+with no day, no hours and nobody holding it. Each drifting item offers the only
+three answers that exist: give it a day, delay it, or drop it. The answer goes
+in as a decision.
+
+## Dictation
+
+Both pages carry a microphone on every box that sends something: the compose
+box, the answer box and the add-a-line box. It uses the browser's own speech
+recognition, Arabic and English with one tap between them, and it never
+repaints the page while it is listening. Where the browser has no speech
+recognition the button says so and points at the keyboard's own microphone key.
+
 ## Keeping a phone current
 
 A phone can hold an old copy of an installed web app for a very long time: the

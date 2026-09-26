@@ -11,10 +11,10 @@
 (function(){
 "use strict";
 
-var BUILD = "2026-09-15.1";   // bumped on every publish, checked against version.json
+var BUILD = "2026-09-26.1";   // bumped on every publish, checked against version.json
 var K = { tok:"planner.token", repo:"planner.repo", board:"planner.board",
           mins:"planner.mins", queue:"planner.queue", theme:"planner.theme",
-          running:"planner.running", sel:"planner.sel" };
+          running:"planner.running", sel:"planner.sel", lang:"planner.lang" };
 
 /* ---------- helpers ---------- */
 function $(id){ return document.getElementById(id); }
@@ -87,6 +87,64 @@ function emptyState(name,text){
 
 function safe(f){ try{ f(); }catch(e){ note("Render failed: "+(e&&e.message?e.message:e),"bad"); } }
 
+/* ---------- dictation ----------
+   The desktop page had no microphone at all, which is why every message this
+   month was typed. Same engine as the phone, and it never calls render() while
+   it is listening: a repaint would take the textarea away mid sentence. */
+var SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+var LANGS = [["ar-SA","عربي"],["en-GB","English"]];
+var langIx = get(K.lang,0);
+var rec=null, recLive=false;
+
+function micRow(ta){
+  var row=el("div","microw");
+  var btn=el("button","mic"); btn.type="button";
+  btn.setAttribute("aria-label","Dictate");
+  var hint=el("span","michint");
+  var lang=el("button","miclang", LANGS[langIx][1]); lang.type="button";
+
+  function paint(msg){
+    btn.className="mic"+(recLive?" on":"");
+    btn.textContent = recLive ? "\u25a0" : "\ud83c\udf99";
+    hint.textContent = msg || (SR
+      ? (recLive ? "Listening. Speak, then tap to stop." : "Tap and speak, in either language.")
+      : "This browser has no dictation. Use the keyboard's own microphone key.");
+    lang.textContent = LANGS[langIx][1];
+  }
+  function stop(){ if(rec){ try{ rec.stop(); }catch(e){} } rec=null; recLive=false; paint(); }
+  function start(){
+    if(!SR) return;
+    var base = ta.value ? ta.value.replace(/\s+$/,"")+" " : "";
+    var r; try{ r=new SR(); }catch(e){ paint("Could not start: "+e.message); return; }
+    r.lang=LANGS[langIx][0]; r.continuous=true; r.interimResults=true;
+    r.onresult=function(ev){
+      var all="";
+      for(var i=0;i<ev.results.length;i++) all += ev.results[i][0].transcript;
+      ta.value = base + all;
+    };
+    r.onerror=function(ev){
+      var c=(ev&&ev.error)||"unknown";
+      rec=null; recLive=false;
+      paint(c==="not-allowed"||c==="service-not-allowed"
+        ? "Microphone blocked for this page. Allow it in the address bar, or use the keyboard's microphone key."
+        : "Dictation stopped: "+c+". The keyboard's microphone key still works.");
+    };
+    r.onend=function(){ rec=null; recLive=false; paint("Stopped. Tap to add more."); };
+    try{ r.start(); rec=r; recLive=true; paint(); }
+    catch(e){ paint("Could not start: "+e.message); }
+  }
+  btn.addEventListener("click",function(){ recLive?stop():start(); });
+  if(!SR){ btn.disabled=true; btn.style.opacity=".45"; }
+  lang.addEventListener("click",function(){
+    langIx=(langIx+1)%LANGS.length; put(K.lang,langIx);
+    if(recLive){ stop(); start(); } else paint();
+  });
+  row.appendChild(btn); row.appendChild(hint);
+  if(SR) row.appendChild(lang);
+  paint();
+  return row;
+}
+
 var DAYS=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 var FULL=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 var DEFAULT = { updated:"", headline:"Not connected. Open settings, add the repository and a token.",
@@ -100,6 +158,7 @@ var running = get(K.running, {});
 var queue   = get(K.queue, []);
 var statuses = {};            // thread id -> {stage, at}
 var plan = {};                // "YYYY-MM-DD#blockIndex" -> thread id
+var dates = {};               // thread id -> "YYYY-MM-DD", the day he means to touch it
 var recent  = [];
 var issues  = null, issuesErr = "";
 var lastSync = 0, busy = false, stateMsg = "";
@@ -242,6 +301,49 @@ function assign(dateStr, blockIx, threadId){
 }
 function planned(dateStr, blockIx){ return plan[dateStr+"#"+blockIx]||""; }
 
+function pullDates(){
+  return gh("/contents/data/dates.jsonl", {soft404:true}).then(function(r){
+    dates={};
+    if(!r||!r.content) return;
+    b64d(r.content).split("\n").forEach(function(ln){
+      if(!ln.trim()) return;
+      var o=null; try{ o=JSON.parse(ln); }catch(e){ return; }
+      if(!o||!o.thread) return;
+      if(o["do"]) dates[o.thread]=o["do"]; else delete dates[o.thread];
+    });
+  });
+}
+function setDoDate(t, iso){
+  if(iso) dates[t.id]=iso; else delete dates[t.id];
+  queue.push({kind:"date", line:JSON.stringify({thread:t.id, "do":iso||null, at:new Date().toISOString()})});
+  put(K.queue,queue); note(iso?"Dated…":"Date cleared…"); render();
+  flushQueue().then(function(){ stateMsg = iso?("On "+iso):"Undated"; render(); })
+    .catch(function(e){ note(e.message,"bad"); });
+}
+function doDate(t){ return dates[t.id]||""; }
+function dayOffset(n){
+  var d=new Date(); d.setDate(d.getDate()+n);
+  return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2);
+}
+function bucketOf(t){
+  var d=doDate(t);
+  if(!d) return "";
+  var today=dayOffset(0);
+  if(d<today) return "overdue";
+  if(d===today) return "today";
+  if(d<=dayOffset(7)) return "week";
+  return "later";
+}
+/* waiting on a named person or a journal, and for how long */
+function waitingDays(t){
+  if(!t.since) return 0;
+  var d=new Date(t.since+"T00:00:00");
+  if(isNaN(d.getTime())) return 0;
+  return Math.max(0, Math.floor((Date.now()-d.getTime())/864e5));
+}
+function chaseAfter(t){ return typeof t.chaseAfter==="number" ? t.chaseAfter : 7; }
+function needsChase(t){ return !!(t.who && t.since && waitingDays(t)>=chaseAfter(t)); }
+
 function loadIssues(){
   return gh("/issues?state=open&per_page=60&sort=created&direction=desc").then(function(r){
     issues=(r||[]).filter(function(x){ return !x.pull_request; }); issuesErr="";
@@ -254,6 +356,7 @@ function flushQueue(){
   if(item.kind==="log")       p=appendLine("data/log.jsonl", item.line, "Session log");
   else if(item.kind==="status") p=appendLine("data/status.jsonl", item.line, "Stage set from the desktop");
   else if(item.kind==="plan")   p=appendLine("data/plan.jsonl", item.line, "Day assigned from the desktop");
+  else if(item.kind==="date")   p=appendLine("data/dates.jsonl", item.line, "Do-date set from the desktop");
   else                        p=gh("/issues", {method:"POST", body:{title:item.title, body:item.body}});
   return p.then(function(){
     queue.shift(); put(K.queue,queue);
@@ -275,7 +378,7 @@ function sync(){
   if(!connected()){ stateMsg=""; render(); return Promise.resolve(); }
   busy=true; note("Syncing…");
   return flushQueue()
-    .then(pullBoard).then(pullStatus).then(pullPlan).then(pullLog).then(loadIssues)
+    .then(pullBoard).then(pullStatus).then(pullPlan).then(pullDates).then(pullLog).then(loadIssues)
     .then(function(){ busy=false; lastSync=Date.now(); stateMsg=""; render(); })
     .catch(function(e){ busy=false; note(e.message,"bad"); render(); });
 }
@@ -497,8 +600,10 @@ function paintRail(){
     r.appendChild(b);
   }
   r.appendChild(el("div","railh lab","Day"));
+  var chases=board.threads.filter(needsChase).length;
   item("today","","Today",null, runIds().length||null, runIds().length>0, "clock");
   item("week","","The week",null,null,false,"calendar");
+  item("review","","Weekly review",null, chases||null, chases>0, "check");
 
   r.appendChild(el("div","railh lab","Categories"));
   domains().forEach(function(d){
@@ -550,6 +655,7 @@ function paintList(){
     return;
   }
   if(sel.kind==="today")  return listToday(n);
+  if(sel.kind==="review") return listReview(n);
   if(sel.kind==="week")   return listWeek(n);
   if(sel.kind==="inbox")  return listInbox(n);
   if(sel.kind==="goals")  return listGoals(n);
@@ -563,6 +669,39 @@ function listToday(n){
   if(!connected()){
     startPath(n, "The walk starts when the repository is connected. Three stones from here to working.");
     return;
+  }
+
+  var chase = board.threads.filter(needsChase);
+  if(chase.length){
+    n.appendChild(el("div","railh lab","Chase, "+chase.length));
+    chase.forEach(function(t){
+      var b=el("button","li"); b.type="button";
+      b.style.setProperty("--a",cvar(t.c||domOf(t).c));
+      var r1=el("div","t1");
+      r1.appendChild(el("span","sw"));
+      r1.appendChild(el("b","wrapall",t.n));
+      r1.appendChild(el("span","rt num",waitingDays(t)+"d"));
+      b.appendChild(r1);
+      b.appendChild(el("div","t2","With "+t.who+" since "+t.since+". Nothing back."));
+      b.addEventListener("click",function(){ sel={kind:"domain",id:t.dom}; put(K.sel,sel); openThread(t.id); });
+      n.appendChild(b);
+    });
+  }
+
+  var buckets={overdue:[],today:[],week:[]};
+  board.threads.forEach(function(t){
+    var bk=bucketOf(t);
+    if(buckets[bk]) buckets[bk].push(t);
+  });
+  [["overdue","Late"],["today","On today"],["week","This week"]].forEach(function(pair){
+    var list=buckets[pair[0]];
+    if(!list.length) return;
+    n.appendChild(el("div","railh lab",pair[1]+", "+list.length));
+    list.forEach(function(t){ threadRow(n,t); });
+  });
+  if(!chase.length && !buckets.overdue.length && !buckets.today.length){
+    n.appendChild(el("div","railh lab","On today"));
+    n.appendChild(emptyState("clock","Nothing is dated for today. Open a path and give it a day, or let the review below choose."));
   }
 
   n.appendChild(el("div","railh lab","The day, morning to night"));
@@ -593,6 +732,177 @@ function listToday(n){
     n.appendChild(el("div","railh lab","Closest to their final"));
     crit.forEach(function(x){ threadRow(n,x); });
   }
+}
+
+function movedThisWeek(){
+  var cut=Date.now()-7*864e5, out=[];
+  board.threads.forEach(function(t){
+    var st=statuses[t.id];
+    if(st && st.at && new Date(st.at).getTime()>=cut) out.push({t:t, what:"moved to "+(st.label||"a new stage"), at:st.at});
+  });
+  recent.forEach(function(o){
+    if(new Date(o.start).getTime()<cut) return;
+    var t=T(o.thread); if(!t) return;
+    out.push({t:t, what:dur(o.minutes)+" tracked", at:o.start});
+  });
+  out.sort(function(a,b){ return new Date(b.at)-new Date(a.at); });
+  return out;
+}
+function weekHours(){
+  var s=0; for(var k in mins) if(mins.hasOwnProperty(k)) s+=mins[k];
+  runIds().forEach(function(id){ s+=(Date.now()-running[id])/60000; });
+  return s/60;
+}
+function driftingThreads(){
+  // no day, no hours, nobody holding it. Teaching and finance run on their own
+  // cadence and are never drifting, so they are not asked about.
+  return board.threads.filter(function(t){
+    if(t.dom==="teaching" || t.dom==="finance") return false;
+    if(t.who && t.since) return false;
+    if(doDate(t)) return false;
+    if((mins[t.id]||0)>0) return false;
+    if(isUnset(t)) return true;
+    return stageIx(t) < stageCount(t)-1;
+  });
+}
+
+function listReview(n){
+  listHead(n,"Weekly review", "Saturday");
+  if(!connected()){
+    startPath(n, "The review reads the week from the repository. Connect it and it fills.");
+    return;
+  }
+  var chase=board.threads.filter(needsChase);
+  var moved=movedThisWeek();
+  var hrs=weekHours();
+  var mini=el("div","mini");
+  function mc(v,l){ var c=el("div","mc"); c.appendChild(el("b","num",v)); c.appendChild(el("span","lab",l)); mini.appendChild(c); }
+  mc(String(moved.length),"moves this week");
+  mc(String(chase.length),"need chasing");
+  mc(hrs>=1?dur(hrs*60):"0m","tracked of 40h");
+  mc(String(driftingThreads().length),"drifting");
+  n.appendChild(mini);
+
+  if(moved.length){
+    n.appendChild(el("div","railh lab","What moved"));
+    moved.slice(0,12).forEach(function(m){
+      var b=el("div","li"); b.style.setProperty("--a",cvar(m.t.c||domOf(m.t).c));
+      var r1=el("div","t1"); r1.appendChild(el("span","sw"));
+      r1.appendChild(el("b","wrapall",m.t.n));
+      r1.appendChild(el("span","rt",ago(m.at)));
+      b.appendChild(r1);
+      b.appendChild(el("div","t2",m.what));
+      n.appendChild(b);
+    });
+  } else {
+    n.appendChild(el("div","railh lab","What moved"));
+    n.appendChild(emptyState("layers","Nothing recorded this week. Either it was a quiet week or nothing reached the record."));
+  }
+
+  if(chase.length){
+    n.appendChild(el("div","railh lab","Stuck with someone"));
+    chase.forEach(function(t){
+      var b=el("button","li"); b.type="button";
+      b.style.setProperty("--a",cvar(t.c||domOf(t).c));
+      var r1=el("div","t1"); r1.appendChild(el("span","sw"));
+      r1.appendChild(el("b","wrapall",t.n));
+      r1.appendChild(el("span","rt num",waitingDays(t)+"d"));
+      b.appendChild(r1);
+      b.appendChild(el("div","t2","With "+t.who));
+      b.addEventListener("click",function(){ sel={kind:"domain",id:t.dom}; put(K.sel,sel); openThread(t.id); });
+      n.appendChild(b);
+    });
+  }
+}
+
+function detailReview(d){
+  backBtn(d);
+  if(!connected()){
+    d.appendChild(el("h2",null,"The review is empty"));
+    var s0=el("div","sec");
+    startPath(s0, "Connect the repository and this fills with the week you actually had.");
+    d.appendChild(s0);
+    return;
+  }
+  d.appendChild(el("h2",null,"What gives"));
+  d.appendChild(el("p","lead wrapall","Thirty minutes, once a week. Everything below is a decision you have not made yet. Each answer goes in as a decision and gets filed."));
+
+  var drift=driftingThreads();
+  if(drift.length){
+    var s1=el("div","sec");
+    var h1=el("div","lh");
+    h1.appendChild(el("h3","lab","Drifting, "+drift.length));
+    h1.appendChild(el("span",null,"no day, no hours, nobody holding it"));
+    s1.appendChild(h1);
+    drift.slice(0,10).forEach(function(t){
+      var r=el("div","file");
+      var sw=el("span"); sw.style.cssText="width:7px;height:7px;border-radius:50%;flex:none;background:"+cvar(t.c||domOf(t).c);
+      r.appendChild(sw);
+      r.appendChild(el("span","p wrapall",t.n));
+      var go=el("button","btn sm","Give it a day");
+      go.addEventListener("click",function(){ sel={kind:"domain",id:t.dom}; put(K.sel,sel); openThread(t.id); });
+      var park=el("button","btn sm warn","Delay or drop");
+      park.addEventListener("click",function(){ decide(d, t); });
+      r.appendChild(go); r.appendChild(park);
+      s1.appendChild(r);
+    });
+    d.appendChild(s1);
+  }
+
+  var hrs=weekHours();
+  var s2=el("div","sec"); s2.appendChild(el("h3","lab","Capacity"));
+  s2.appendChild(el("p","kv wrapall", hrs>=1
+    ? (dur(hrs*60)+" tracked against forty. "+(hrs>40?"Over.":"Under, or the timer was not running."))
+    : "Nothing tracked this week. Either nothing was worked on, which is not true, or the timer is not being used."));
+  d.appendChild(s2);
+
+  var q=board.open||[];
+  if(q.length){
+    var s3=el("div","sec"); s3.appendChild(el("h3","lab","Questions waiting on you, "+q.length));
+    q.forEach(function(x,i){
+      var r=el("div","file");
+      var nb=el("span","num",String(i+1));
+      nb.style.cssText="flex:none;width:18px;color:var(--faint);font-size:12px";
+      r.appendChild(nb);
+      r.appendChild(el("span","p wrapall",x));
+      var b=el("button","btn sm","Answer");
+      b.addEventListener("click",function(){ sel={kind:"open",id:String(i)}; put(K.sel,sel);
+        document.body.classList.add("detail-open"); render(); });
+      r.appendChild(b);
+      s3.appendChild(r);
+    });
+    d.appendChild(s3);
+  }
+}
+
+function decide(d, t){
+  var h=$("modal"); h.innerHTML="";
+  var ov=el("div","modal");
+  ov.addEventListener("click",function(e){ if(e.target===ov) h.innerHTML=""; });
+  var cd=el("div","cd");
+  cd.appendChild(el("h3","lab","Delay, drop or start"));
+  cd.appendChild(el("p","lead wrapall",t.n));
+  var ta=document.createElement("textarea");
+  ta.placeholder="Say what happens to it and why. One line is enough.";
+  cd.appendChild(ta);
+  cd.appendChild(micRow(ta));
+  var row=el("div","btnrow");
+  ["Delay it","Drop it","Start it"].forEach(function(label){
+    var b=el("button","btn"+(label==="Start it"?" pri":""), label);
+    b.addEventListener("click",function(){
+      var v=ta.value.trim();
+      var body=label+". "+(v||"No reason given.")+
+        "\n\n---\nThread: `"+t.id+"` \u2014 "+t.n+
+        "\nSent from the weekly review, "+new Date().toISOString()+".";
+      queue.push({kind:"issue", title:"Decision: "+t.n, body:body});
+      put(K.queue,queue); h.innerHTML=""; note("Sending the decision…");
+      flushQueue().then(loadIssues).then(function(){ stateMsg="Decision sent."; render(); })
+        .catch(function(e){ note(e.message,"bad"); });
+    });
+    row.appendChild(b);
+  });
+  cd.appendChild(row);
+  ov.appendChild(cd); h.appendChild(ov);
 }
 
 function listWeek(n){
@@ -771,6 +1081,7 @@ function paintDetail(){
   var t=selThread?T(selThread):null;
   if(!t){
     if(sel.kind==="today") return detailToday(d);
+    if(sel.kind==="review") return detailReview(d);
     if(sel.kind==="goals") return detailMap(d);
     backBtn(d);
     d.appendChild(el("h2",null,"Pick a path"));
@@ -921,6 +1232,37 @@ function detailThread(d,t){
   s1.appendChild(ns);
   d.appendChild(s1);
 
+  // when: the day he means to touch it. Not a deadline, and his to move.
+  var sw=el("div","sec");
+  var wh=el("div","lh");
+  wh.appendChild(el("h3","lab","The day you touch it"));
+  var cur=doDate(t);
+  wh.appendChild(el("span",null, cur ? (cur+(bucketOf(t)==="overdue"?" · late":"")) : "no day yet"));
+  sw.appendChild(wh);
+  var row=el("div","btnrow");
+  [["Today",0],["Tomorrow",1],["In two days",2],["Next week",7]].forEach(function(o){
+    var iso=dayOffset(o[1]);
+    var b=el("button","btn sm"+(cur===iso?" pri":""), o[0]);
+    b.addEventListener("click",function(){ setDoDate(t, iso); });
+    row.appendChild(b);
+  });
+  var pick=document.createElement("input"); pick.type="date"; pick.value=cur||"";
+  pick.style.cssText="width:auto;flex:none";
+  pick.addEventListener("change",function(){ setDoDate(t, pick.value); });
+  row.appendChild(pick);
+  if(cur){
+    var clr=el("button","btn sm warn","Clear");
+    clr.addEventListener("click",function(){ setDoDate(t, ""); });
+    row.appendChild(clr);
+  }
+  sw.appendChild(row);
+  if(t.who && t.since){
+    sw.appendChild(el("p","note","With "+t.who+" since "+t.since+", "+waitingDays(t)+" days. "+
+      (needsChase(t) ? "Past the "+chaseAfter(t)+" day mark, so it is on today's chase list."
+                     : "It becomes a chase after "+chaseAfter(t)+" days.")));
+  }
+  d.appendChild(sw);
+
   // timer
   var s2=el("div","sec"); s2.appendChild(el("h3","lab","Time"));
   var row=el("div","btnrow");
@@ -969,8 +1311,9 @@ function detailThread(d,t){
   });
   kind.style.marginBottom="8px"; s4.appendChild(kind);
   var ta=document.createElement("textarea");
-  ta.placeholder="What happened, what changed, what you decided. Dictation key works here.";
+  ta.placeholder="What happened, what changed, what you decided. Speak it or type it.";
   s4.appendChild(ta);
+  s4.appendChild(micRow(ta));
   var br=el("div","btnrow");
   var send=withIcon(el("button","btn pri","Send"),"chat");
   send.addEventListener("click",function(){
@@ -1028,6 +1371,7 @@ function detailFile(d){
     qt.placeholder="One line. It is added under the section you picked, dated today.";
     qt.style.minHeight="70px";
     qa.appendChild(qt);
+    qa.appendChild(micRow(qt));
     var qb=el("div","btnrow");
     var qgo=el("button","btn","Add and save");
     qgo.addEventListener("click",function(){
@@ -1082,6 +1426,7 @@ function detailQuestion(d,ix){
   var ta=document.createElement("textarea");
   ta.placeholder="Your answer. It goes in as a decision and Claude files it.";
   s.appendChild(ta);
+  s.appendChild(micRow(ta));
   var row=el("div","btnrow");
   var go=el("button","btn pri","Send the decision");
   go.addEventListener("click",function(){
@@ -1120,7 +1465,7 @@ function paletteItems(){
   domains().forEach(function(d){
     out.push({label:d.n, hint:"category", c:d.c, run:function(){ pick("domain",d.id); }});
   });
-  [["Today","today"],["The week","week"],["Inbox","inbox"],["The map","goals"],
+  [["Today","today"],["Weekly review","review"],["The week","week"],["Inbox","inbox"],["The map","goals"],
    ["Waiting on you","open"],["Files","files"]].forEach(function(p){
     out.push({label:p[0], hint:"view", c:"", run:function(){ pick(p[1],""); }});
   });

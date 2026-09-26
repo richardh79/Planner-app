@@ -6,7 +6,7 @@
 var K    = { tok:"planner.token", repo:"planner.repo", board:"planner.board", focus:"planner.focus",
              mins:"planner.mins", queue:"planner.queue", lang:"planner.lang", theme:"planner.theme",
              running:"planner.running" };
-var BUILD = "2026-09-15.1";   // bumped on every publish, checked against version.json
+var BUILD = "2026-09-26.1";   // bumped on every publish, checked against version.json
 function REPO(){ return getRaw(K.repo) || ""; }
 function API(){ return "https://api.github.com/repos/" + REPO(); }
 
@@ -61,6 +61,7 @@ if(!running){                       // migrate the old single-thread value
 function isOn(id){ return Object.prototype.hasOwnProperty.call(running,id); }
 var statuses = {};   // thread id -> {stage, at}, what he has confirmed himself
 var plan = {};       // "YYYY-MM-DD#blockIndex" -> thread id
+var dates = {};      // thread id -> "YYYY-MM-DD", the day he means to touch it
 var openDom = "";    // which category is expanded in Work
 function runningIds(){ return Object.keys(running); }
 function runCount(){ return runningIds().length; }
@@ -154,6 +155,46 @@ function pullPlan(){
   });
 }
 function planned(dateStr, blockIx){ return plan[dateStr+"#"+blockIx]||""; }
+function pullDates(){
+  return gh("/contents/data/dates.jsonl", {soft404:true}).then(function(r){
+    dates={};
+    if(!r||!r.content) return;
+    b64d(r.content).split("\n").forEach(function(ln){
+      if(!ln.trim()) return;
+      var o=null; try{ o=JSON.parse(ln); }catch(e){ return; }
+      if(!o||!o.thread) return;
+      if(o["do"]) dates[o.thread]=o["do"]; else delete dates[o.thread];
+    });
+  });
+}
+function setDoDate(t, iso){
+  if(iso) dates[t.id]=iso; else delete dates[t.id];
+  queue.push({kind:"date", line:JSON.stringify({thread:t.id, "do":iso||null, at:new Date().toISOString()})});
+  put(K.queue,queue); syncMsg = iso?("on "+iso):"undated"; render();
+  flushQueue().then(function(){ syncMsg = queue.length?"queued, no signal":(iso?("on "+iso):"undated"); render(); });
+}
+function doDate(t){ return dates[t.id]||""; }
+function dayOffset(n){
+  var d=new Date(); d.setDate(d.getDate()+n);
+  return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2);
+}
+function bucketOf(t){
+  var d=doDate(t);
+  if(!d) return "";
+  var today=dayOffset(0);
+  if(d<today) return "overdue";
+  if(d===today) return "today";
+  if(d<=dayOffset(7)) return "week";
+  return "later";
+}
+function waitingDays(t){
+  if(!t.since) return 0;
+  var d=new Date(t.since+"T00:00:00");
+  if(isNaN(d.getTime())) return 0;
+  return Math.max(0, Math.floor((Date.now()-d.getTime())/864e5));
+}
+function chaseAfter(t){ return typeof t.chaseAfter==="number" ? t.chaseAfter : 7; }
+function needsChase(t){ return !!(t.who && t.since && waitingDays(t)>=chaseAfter(t)); }
 function dayStr(dayIx){
   var d=new Date();
   d.setDate(d.getDate() + (dayIx - d.getDay()));
@@ -193,6 +234,7 @@ function flushQueue(){
   var p = item.kind==="log"    ? appendLog(item.line)
         : item.kind==="status" ? appendLine("data/status.jsonl", item.line, "Stage set from the phone")
         : item.kind==="plan"   ? appendLine("data/plan.jsonl", item.line, "Day assigned from the phone")
+        : item.kind==="date"   ? appendLine("data/dates.jsonl", item.line, "Do-date set from the phone")
         : gh("/issues", {method:"POST", body:{title:item.title, body:item.body}});
   return p.then(function(){
     queue.shift(); put(K.queue,queue);
@@ -446,6 +488,42 @@ function vNow(m){
     m.appendChild(r2);
   }
 
+  var chase=board.threads.filter(needsChase);
+  if(chase.length){
+    var sc=el("div","sec");
+    sc.appendChild(sech("Chase", chase.length+" waiting too long"));
+    chase.forEach(function(t){
+      var b=el("button","row");
+      b.style.setProperty("--a","var("+t.c+")");
+      b.appendChild(el("span","dot"));
+      var nm=el("span","nm any"); nm.textContent=t.n;
+      nm.appendChild(el("u",null,"With "+t.who+" since "+t.since));
+      b.appendChild(nm);
+      b.appendChild(el("span","val num",waitingDays(t)+"d"));
+      b.addEventListener("click",function(){ openThread(t); });
+      sc.appendChild(b);
+    });
+    m.appendChild(sc);
+  }
+
+  var buckets={overdue:[],today:[],week:[]};
+  board.threads.forEach(function(t){ var bk=bucketOf(t); if(buckets[bk]) buckets[bk].push(t); });
+  [["overdue","Late"],["today","On today"],["week","This week"]].forEach(function(pair){
+    var list=buckets[pair[0]];
+    if(!list.length) return;
+    var sd=el("div","sec");
+    sd.appendChild(sech(pair[1], String(list.length)));
+    list.forEach(function(t){ sd.appendChild(threadRow(t)); });
+    m.appendChild(sd);
+  });
+  if(!chase.length && !buckets.overdue.length && !buckets.today.length && board.threads.length){
+    var se0=el("div","sec");
+    se0.appendChild(sech("On today"));
+    var e0=band("flat");
+    e0.appendChild(el("p","empty","Nothing is dated for today. Open a path and give it a day."));
+    se0.appendChild(e0); m.appendChild(se0);
+  }
+
   if(board.headline){
     var s1=el("div","sec");
     s1.appendChild(sech("The one line"));
@@ -560,6 +638,37 @@ function sech(title, right){
 
 /* ---------- map ---------- */
 function vMap(m){
+  var chase2=board.threads.filter(needsChase);
+  var drift=board.threads.filter(function(t){
+    if(t.dom==="teaching" || t.dom==="finance") return false;
+    if(t.who && t.since) return false;
+    if(doDate(t)) return false;
+    if((mins[t.id]||0)>0) return false;
+    if(isUnset(t)) return true;
+    return stageIx(t) < stageCount(t)-1;
+  });
+  if(board.threads.length){
+    var rv=band("flat");
+    rv.appendChild(el("span","kicker tag","Weekly review"));
+    rv.appendChild(el("p","quote any",
+      chase2.length
+        ? (chase2.length+(chase2.length===1?" thread has":" threads have")+" been waiting too long, and "+drift.length+" have no day and no hours. That is the whole conversation.")
+        : (drift.length+" threads have no day and no hours on them. Give them a day, delay them, or drop them.")));
+    var rb=el("div","thb");
+    if(chase2.length){
+      var cb=el("button","go","Chase "+chase2.length);
+      cb.addEventListener("click",function(){ view="now"; render(); window.scrollTo(0,0); });
+      rb.appendChild(cb);
+    }
+    drift.slice(0,1).forEach(function(t){
+      var db=el("button",null,"Decide on "+t.n.slice(0,22));
+      db.addEventListener("click",function(){ openThread(t); });
+      rb.appendChild(db);
+    });
+    rv.appendChild(rb);
+    m.appendChild(rv);
+  }
+
   var a=alignment();
   var st=band("stat", a.tot?(a.pc>=60?"--good":(a.pc>=35?"--hot":"--bad")):"--neutral");
   st.appendChild(el("span","v num", a.tot?(a.pc+"%"):"—"));
@@ -904,6 +1013,30 @@ function openThread(t){
     s.appendChild(box);
     sh.appendChild(s);
 
+    var cur=doDate(t);
+    var sd=el("div","sec");
+    sd.appendChild(sech("The day you touch it", cur||"no day yet"));
+    var dbox=band("flat");
+    var drow=el("div","thb");
+    [["Today",0],["Tomorrow",1],["Next week",7]].forEach(function(o){
+      var iso=dayOffset(o[1]);
+      var b=el("button", cur===iso?"go":"", o[0]);
+      b.addEventListener("click",function(){ setDoDate(t, iso); closeSheet(); });
+      drow.appendChild(b);
+    });
+    if(cur){
+      var cl=el("button",null,"Clear");
+      cl.addEventListener("click",function(){ setDoDate(t, ""); closeSheet(); });
+      drow.appendChild(cl);
+    }
+    dbox.appendChild(drow);
+    if(t.who && t.since){
+      dbox.appendChild(el("p","note","With "+t.who+" since "+t.since+", "+waitingDays(t)+" days. "+
+        (needsChase(t)?"On the chase list.":"Becomes a chase after "+chaseAfter(t)+" days.")));
+    }
+    sd.appendChild(dbox);
+    sh.appendChild(sd);
+
     if((t.files||[]).length){
       var sf=el("div","sec"); sf.appendChild(sech("Files","open and add a line"));
       (t.files||[]).forEach(function(pth){
@@ -1096,6 +1229,7 @@ function settings(){
       gh("/issues?per_page=1").then(function(){ return pullBoard(); })
         .then(function(){ return pullStatus(); })
         .then(function(){ return pullPlan(); })
+        .then(function(){ return pullDates(); })
         .then(function(){ return pullLog(); })
         .then(function(){
           $("setst").textContent="Connected. Board synced."; $("setst").className="note ok";
@@ -1190,14 +1324,14 @@ if(token){
   flushQueue();
   pullBoard()
     .then(function(j){ if(j){ syncMsg="synced"; render(); } })
-    .then(pullStatus).then(pullPlan).then(render)
+    .then(pullStatus).then(pullPlan).then(pullDates).then(render)
     .catch(function(e){ syncMsg=e.message; render(); });
   pullLog().then(render).catch(function(){});
 }
 
 if("serviceWorker" in navigator){
   window.addEventListener("load",function(){
-    navigator.serviceWorker.register("sw.js?v=10",{updateViaCache:"none"}).then(function(reg){
+    navigator.serviceWorker.register("sw.js?v=11",{updateViaCache:"none"}).then(function(reg){
       try{ reg.update(); }catch(e){}
       document.addEventListener("visibilitychange",function(){
         if(document.visibilityState==="visible"){ try{ reg.update(); }catch(e){} }
