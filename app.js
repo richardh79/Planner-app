@@ -1017,8 +1017,8 @@ var rec=null, live=false, recBase="", recHint="";
 
 var CUMULATIVE = /Android/i.test(navigator.userAgent||"");
 /* Dictation arrives in two shapes. Desktop Chrome sends separate phrases.
-   Android sends the whole transcript again with every result ("for the",
-   "for the umbrella", "for the umbrella review"), and sometimes revises the
+   Android sends the whole transcript again with every result ("send the",
+   "send the draft", "send the draft today"), and sometimes revises the
    last word or drops it before putting it back. Comparing whole strings broke
    on the first revision and every word after it repeated. Results are now
    compared word by word against the phrase they restate, and the newest
