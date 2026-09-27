@@ -134,6 +134,16 @@ Neither is guessed. Both are written down only when you say them.
   message. On the desktop the arrow keys do the same.
 - **One look**, the first item on the desktop and the MAP tab on the phone,
   puts all of it on one screen.
+- **To-dos** live on each path and gather on NOW and Today; a tap ticks one
+  off, and the morning message lists the ones due as tick boxes.
+- **The organizer** is a small open model on the private repository's own
+  GitHub runner. It reads each message and proposes a thread, a summary,
+  to-dos and a stage; the app shows the proposal with Apply and Ignore.
+- **Pins** keep starred paths at the top. **Search** covers paths, to-dos and
+  messages. **Meeting** notes take who, decisions and actions.
+- **The week is editable**: any block can be moved, retimed, cancelled for one
+  date or for good, and new blocks added, from either device.
+- **Notifications** reach the phone and the PC once turned on in Settings.
 
 ## The weekly review
 
