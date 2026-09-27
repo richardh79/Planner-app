@@ -96,21 +96,52 @@ var LANGS = [["ar-SA","عربي"],["en-GB","English"]];
 var langIx = get(K.lang,0);
 var rec=null, recLive=false;
 
-/* Android returns dictation cumulatively: "just", "just 123", "just 123 test",
-   each as its own result. Desktop Chrome returns separate phrases. Joining them
-   blindly repeated every word on the phone, so a result that restates what came
-   before replaces it instead of adding to it. */
-function joinResults(results){
-  var out="";
-  for(var i=0;i<results.length;i++){
-    var t=results[i][0].transcript||"";
-    var a=out.trim().toLowerCase(), b=t.trim().toLowerCase();
-    if(!b) continue;
-    if(a && b.indexOf(a)===0){ out=t; continue; }
-    if(a && a.length>=b.length && a.slice(-b.length)===b) continue;
-    out += (out && !/\s$/.test(out) && !/^\s/.test(t)) ? " "+t : t;
+var CUMULATIVE = /Android/i.test(navigator.userAgent||"");
+/* Dictation arrives in two shapes. Desktop Chrome sends separate phrases.
+   Android sends the whole transcript again with every result ("for the",
+   "for the umbrella", "for the umbrella review"), and sometimes revises the
+   last word or drops it before putting it back. Comparing whole strings broke
+   on the first revision and every word after it repeated. Results are now
+   compared word by word against the phrase they restate, and the newest
+   version of a phrase replaces the older one. */
+function dictWords(s){
+  return s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu,"").split(/\s+/).filter(Boolean);
+}
+function restates(a,b){
+  var n=Math.min(a.length,b.length), p=0;
+  if(!n) return false;
+  while(p<n && a[p]===b[p]) p++;
+  if(p===n) return true;
+  if(!CUMULATIVE || a[0]!==b[0]) return false;
+  /* same opening word, and most of the shorter version appears in order in the
+     longer: a revised, dropped or inserted word, not a new phrase */
+  var s=a.length<=b.length?a:b, l=s===a?b:a, j=0, kept=0;
+  for(var i=0;i<s.length;i++){
+    var k=l.indexOf(s[i],j);
+    if(k>=0){ kept++; j=k+1; }
   }
-  return out.replace(/\s+/g," ").trim();
+  return kept>=2 && kept>=s.length*0.7;
+}
+function endsWithWords(a,b){
+  if(b.length>a.length) return false;
+  for(var i=1;i<=b.length;i++) if(a[a.length-i]!==b[b.length-i]) return false;
+  return true;
+}
+function joinResults(results){
+  var segs=[];
+  for(var i=0;i<results.length;i++){
+    var t=((results[i][0]&&results[i][0].transcript)||"").replace(/\s+/g," ").trim();
+    if(!t) continue;
+    var w=dictWords(t);
+    if(!w.length) continue;
+    var all=[]; segs.forEach(function(s){ all=all.concat(s.w); });
+    if(segs.length>1 && restates(all,w)){ segs=[{t:t,w:w}]; continue; }
+    var last=segs[segs.length-1];
+    if(last && restates(last.w,w)){ segs[segs.length-1]={t:t,w:w}; continue; }
+    if(last && endsWithWords(all,w)) continue;
+    segs.push({t:t,w:w});
+  }
+  return segs.map(function(s){ return s.t; }).join(" ");
 }
 function micRow(ta){
   var row=el("div","microw");
