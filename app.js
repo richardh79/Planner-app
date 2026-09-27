@@ -6,7 +6,7 @@
 var K    = { tok:"planner.token", repo:"planner.repo", board:"planner.board", focus:"planner.focus",
              mins:"planner.mins", queue:"planner.queue", lang:"planner.lang", theme:"planner.theme",
              running:"planner.running" };
-var BUILD = "2026-09-27.1";   // bumped on every publish, checked against version.json
+var BUILD = "2026-09-27.2";   // bumped on every publish, checked against version.json
 function REPO(){ return getRaw(K.repo) || ""; }
 function API(){ return "https://api.github.com/repos/" + REPO(); }
 
@@ -70,6 +70,7 @@ var queue = get(K.queue, []);
 var view  = "now";
 (function(){ var h=(location.hash||"").slice(1); if(/^(now|map|threads|say|inbox)$/.test(h)) view=h; })();
 var selDay = new Date().getDay();
+var mapDay = new Date().getDay();
 var issues = null, issuesAt = 0, issuesErr = "";
 var syncMsg = "";
 
@@ -104,7 +105,7 @@ function pullBoard(){
   return gh("/contents/data/board.json", {soft404:true}).then(function(r){
     if(!r||!r.content) return null;
     var j = JSON.parse(b64d(r.content));
-    if(j && j.threads && j.week){ board=j; put(K.board,j); mergeAdded(); }
+    if(j && j.threads && j.week){ board=j; put(K.board,j); mergeAdded(); baseWeek=null; applyWeekEdits(); }
     return j;
   });
 }
@@ -242,6 +243,7 @@ function flushQueue(){
         : item.kind==="added"  ? appendLine("data/added.jsonl", item.line, "Added from the phone")
         : item.kind==="link"   ? appendLine("desktop/links.jsonl", item.line, "Folder linked from the phone")
         : item.kind==="push"   ? appendLine("data/push.jsonl", item.line, "Notifications set on the phone")
+        : item.kind==="week"   ? appendLine("data/week.jsonl", item.line, "Timetable changed from the phone")
         : gh("/issues", {method:"POST", body:{title:item.title, body:item.body}});
   return p.then(function(){
     queue.shift(); put(K.queue,queue);
@@ -357,7 +359,7 @@ function deskRows(){
    once, and filed properly by Claude at the next session (project file, goal,
    board). The same line also arrives as an issue so it is not missed. */
 var added = get("planner.added", []);
-setTimeout(mergeAdded,0);   // the cached board, before the network answers
+setTimeout(function(){ mergeAdded(); applyWeekEdits(); },0);   // the cached board, before the network answers
 function mergeAdded(){
   (added||[]).forEach(function(a){ if(a && a.id && !T(a.id)) board.threads.push(a); });
 }
@@ -467,6 +469,121 @@ function pushPanel(wrap, btnCls, noteCls){
     });
   });
   wrap.appendChild(b); wrap.appendChild(msg);
+}
+/* The timetable is editable from the app. board.json holds the standing week;
+   data/week.jsonl holds his changes on top of it, applied in order:
+     {day:0, key, block:{...}}     change a block every week
+     {day:0, key, remove:true}     take it off every week
+     {date:"2026-09-27", key, ...} the same, for that one date only
+     {reset:true}                  everything before this is already folded
+                                   into board.json by Claude
+   A block's key is its day, name and start time as they stand in board.json,
+   so edits survive a reload and never depend on a position in a list. */
+var weekEdits = get("planner.weekedits", []), baseWeek = null;
+function thisWeekDate(d){
+  var x=new Date(); x.setDate(x.getDate()+(d-x.getDay()));
+  return x.getFullYear()+"-"+("0"+(x.getMonth()+1)).slice(-2)+"-"+("0"+x.getDate()).slice(-2);
+}
+function applyWeekEdits(){
+  if(!baseWeek) baseWeek=JSON.parse(JSON.stringify(board.week||[]));
+  var w=JSON.parse(JSON.stringify(baseWeek)), dates={}, i, k, from=0;
+  for(i=0;i<7;i++){ w[i]=w[i]||[]; dates[thisWeekDate(i)]=i; }
+  w.forEach(function(arr,d){ arr.forEach(function(x){ if(!x[7]) x[7]=d+"|"+x[1]+"|"+x[4]; }); });
+  for(i=0;i<weekEdits.length;i++) if(weekEdits[i] && weekEdits[i].reset) from=i+1;
+  weekEdits.slice(from).forEach(function(e){
+    var d = e.date!=null ? dates[e.date] : e.day;
+    if(d==null || !w[d]) return;                 // a one-off for another week
+    var arr=w[d], at=-1;
+    for(k=0;k<arr.length;k++) if(arr[k][7]===e.key) at=k;
+    if(e.remove){ if(at>=0) arr.splice(at,1); return; }
+    var b=e.block; if(!b) return;
+    var old=at>=0?arr[at]:null;
+    var blk=[hm(b.start)+"\u2013"+hm(b.end), b.n, b.d||"", b.c||(old?old[3]:"--neutral"),
+             b.start, b.end, b.work?1:0, old?old[7]:e.key];
+    if(e.date!=null) blk[8]={once:true};
+    if(old) arr[at]=blk; else arr.push(blk);
+  });
+  w.forEach(function(arr){ arr.sort(function(a,b){ return a[4]-b[4]; }); });
+  board.week=w;
+}
+function pullWeekEdits(){
+  return gh("/contents/data/week.jsonl",{soft404:true}).then(function(r){
+    var list=readLines(r), have={};
+    list.forEach(function(e){ if(e && e.at) have[e.at+"|"+e.key]=1; });
+    queue.forEach(function(q){ if(q.kind!=="week") return; try{ var e=JSON.parse(q.line); if(!have[e.at+"|"+e.key]) list.push(e); }catch(x){} });
+    weekEdits=list; put("planner.weekedits", weekEdits); applyWeekEdits();
+  }).catch(function(){});
+}
+function saveWeekEdit(e, issueTitle, issueBody){
+  e.at=e.at||new Date().toISOString(); e.via=WHERE;
+  weekEdits.push(e); put("planner.weekedits", weekEdits); applyWeekEdits();
+  queue.push({kind:"week", line:JSON.stringify(e)});
+  if(issueTitle) queue.push({kind:"issue", title:issueTitle, body:issueBody+"\n\n---\nSent from the Planner "+WHERE+", "+e.at+"."});
+  put(K.queue,queue);
+}
+function toMin(v){ var p=String(v||"").split(":"); return (parseInt(p[0],10)||0)*60+(parseInt(p[1],10)||0); }
+/* One form for changing a block, adding one, or taking one off, used by both
+   apps. cls names the host app's classes for fields, inputs and buttons. */
+function blockEditor(wrap, d, blk, cls, done){
+  var isNew=!blk, key=blk?blk[7]:("add|"+Date.now().toString(36));
+  function fld(label,node){ var f=el("div",cls.fld); f.appendChild(el("label",cls.label,label)); f.appendChild(node); wrap.appendChild(f); return node; }
+  function inp(type,val){ var i=document.createElement("input"); i.type=type; i.value=val||""; i.setAttribute("dir","auto"); return i; }
+  var nm=fld("What", inp("text", blk?blk[1]:"")); nm.placeholder="Lecture, meeting, a working block";
+  var dt=fld("Detail", inp("text", blk?blk[2]:"")); dt.placeholder="Section, room, anything short";
+  var ds=document.createElement("select");
+  FULL.forEach(function(n,i){ var o=el("option",null,n); o.value=String(i); if(i===d) o.selected=true; ds.appendChild(o); });
+  fld("Day", ds);
+  var st=fld("Starts", inp("time", blk&&blk[5]>blk[4]?hm(blk[4]):"13:00"));
+  var en=fld("Ends", inp("time", blk&&blk[5]>blk[4]?hm(blk[5]):"14:00"));
+  var wk=document.createElement("input"); wk.type="checkbox"; wk.checked=!!(blk&&blk[6]);
+  var wl=el("label",cls.check); wl.appendChild(wk); wl.appendChild(document.createTextNode(" A working block, for a thread"));
+  wrap.appendChild(wl);
+  var scope="once";
+  var sc=el("div",cls.row);
+  var b1=el("button",cls.btn,"Only "+FULL[d]+" "+fmtDay(thisWeekDate(d))), b2=el("button",cls.btn,"Every "+FULL[d]);
+  function paintScope(){ b1.className=cls.btn+(scope==="once"?" "+cls.on:""); b2.className=cls.btn+(scope==="every"?" "+cls.on:""); }
+  b1.addEventListener("click",function(){ scope="once"; paintScope(); });
+  b2.addEventListener("click",function(){ scope="every"; paintScope(); });
+  sc.appendChild(b1); sc.appendChild(b2); paintScope();
+  var sl=el("label",cls.label,"This change is for"); wrap.appendChild(sl); wrap.appendChild(sc);
+  var msg=el("p",cls.note);
+  var acts=el("div",cls.row);
+  var save=el("button",cls.btn+" "+cls.pri, isNew?"Add it":"Save");
+  save.addEventListener("click",function(){
+    var n=nm.value.trim(), s=toMin(st.value), e=toMin(en.value), nd=parseInt(ds.value,10);
+    if(!n){ msg.textContent="Give it a name."; return; }
+    if(e<=s){ msg.textContent="It has to end after it starts."; return; }
+    var block={n:n, d:dt.value.trim(), start:s, end:e, work:wk.checked, c:blk?blk[3]:"--neutral"};
+    var once=scope==="once", moved=!isNew && nd!==d;
+    function where(day){ return once ? {date:thisWeekDate(day)} : {day:day}; }
+    var label=(once?("Only "+FULL[nd]+" "+fmtDay(thisWeekDate(nd))):("Every "+FULL[nd]))+", "+hm(s)+"\u2013"+hm(e);
+    if(moved){
+      if(once && !block.d) block.d="Moved from "+FULL[d];
+      saveWeekEdit(Object.assign(where(d),{key:key, remove:true}));
+      saveWeekEdit(Object.assign(where(nd),{key:"add|"+Date.now().toString(36), block:block}),
+        "Timetable: "+n+" moved", n+" moved from "+FULL[d]+" "+(blk?blk[0]:"")+" to "+label+".");
+    } else {
+      saveWeekEdit(Object.assign(where(nd),{key:key, block:block}),
+        "Timetable: "+n+(isNew?" added":" changed"), n+(isNew?" added: ":" is now: ")+label+(block.d?(". "+block.d):"")+".");
+    }
+    afterWrite("Timetable saved."); done();
+  });
+  acts.appendChild(save);
+  if(!isNew){
+    var cx=el("button",cls.btn,"Cancel it this "+FULL[d]);
+    cx.addEventListener("click",function(){
+      saveWeekEdit({date:thisWeekDate(d), key:key, remove:true}, "Timetable: "+blk[1]+" cancelled",
+        blk[1]+" "+blk[0]+" does not happen on "+FULL[d]+" "+fmtDay(thisWeekDate(d))+".");
+      afterWrite("Cancelled for this "+FULL[d]+"."); done();
+    });
+    var rm=el("button",cls.btn+" "+cls.warn,"Remove from every week");
+    rm.addEventListener("click",function(){
+      saveWeekEdit({day:d, key:key, remove:true}, "Timetable: "+blk[1]+" removed", blk[1]+" "+blk[0]+" removed from every "+FULL[d]+".");
+      afterWrite("Removed from every "+FULL[d]+"."); done();
+    });
+    acts.appendChild(cx); acts.appendChild(rm);
+  }
+  wrap.appendChild(acts); wrap.appendChild(msg);
 }
 function localDay(){
   var d=new Date();
@@ -951,22 +1068,25 @@ function vNow(m){
       var marker=x[5]<=x[4], work=!!x[6];
       var who=planned(dstr,ix), th=who?T(who):null;
       var isNow=isToday&&cur&&cur.i===ix&&!marker;
-      var tappable = work && !marker;
-      var b=band("blk"+(tappable?" walkblk":"")+(isNow?" on":"")+((tappable&&!th)?" hole":""),
+      var tappable = !marker;
+      var b=band("blk"+(tappable?" walkblk":"")+(isNow?" on":"")+((work&&!marker&&!th)?" hole":""),
                  th?th.c:x[3], tappable?"button":"div");
       b.appendChild(el("span","t",x[0]));
       var d=el("span","d");
       d.appendChild(el("b","any",x[1]));
       if(th) d.appendChild(el("span","any"+(isOn(th.id)?" livetxt":""), (isOn(th.id)?"running · ":"")+th.n));
-      else if(tappable) d.appendChild(el("span","any holetxt","Unassigned. Tap to put a thread on it."));
-      else d.appendChild(el("span","any",x[2]||""));
+      else if(work && !marker) d.appendChild(el("span","any holetxt","Unassigned. Tap to put a thread on it."));
+      else d.appendChild(el("span","any",(x[2]||"")+(x[8]&&x[8].once?" \u00b7 this week only":"")));
       b.appendChild(d);
       if(tappable){
-        b.appendChild(el("span","chip"+(th?"":" quiet"), th?"change":"assign"));
-        b.addEventListener("click",function(){ assignSheet(dstr, ix, x); });
+        b.appendChild(el("span","chip"+(th?"":" quiet"), work?(th?"change":"assign"):"edit"));
+        b.addEventListener("click",function(){ if(work) assignSheet(dstr, ix, x, selDay); else blockSheet(selDay, x); });
       }
       s2.appendChild(b);
     });
+    var addb=el("button","addhere","+ Add to "+FULL[selDay]);
+    addb.addEventListener("click",function(){ blockSheet(selDay, null); });
+    s2.appendChild(addb);
     m.appendChild(s2);
   }
 
@@ -1062,6 +1182,13 @@ function linkSheet(u){
         sh.appendChild(b);
       });
     });
+  });
+}
+var PCLS={fld:"fld", label:"tag", check:"chk", row:"scoperow", btn:"sbtn", on:"on", pri:"pri", warn:"warn", note:"note bad"};
+function blockSheet(d, blk){
+  sheet(function(sh){
+    shHead(sh, blk ? (FULL[d]+" \u00b7 "+blk[0]) : ("Add to "+FULL[d]), blk ? blk[1] : "A new block");
+    blockEditor(sh, d, blk, PCLS, function(){ closeSheet(); render(); });
   });
 }
 function questionSheet(q){
@@ -1208,18 +1335,38 @@ function vMap(m){
       col.appendChild(el("span","wd",DAYS[d].slice(0,1)));
       var ds=dayStr(d);
       (board.week[d]||[]).forEach(function(x,ix){
-        if(!x[6] || x[5]<=x[4]) return;
-        var who=planned(ds,ix), th=who?T(who):null;
-        var cell=el("i", th?"on":"hole");
+        if(x[5]<=x[4]) return;
+        var who=x[6]?planned(ds,ix):"", th=who?T(who):null;
+        var cell=el("i", x[6]?(th?"on":"hole"):"fixed");
         cell.style.flexGrow=String(Math.max(1,Math.round((x[5]-x[4])/60)));
-        if(th){ cell.style.background="var("+th.c+")"; filled++; } else holes++;
+        if(th){ cell.style.background="var("+th.c+")"; filled++; }
+        else if(x[6]) holes++;
+        else cell.style.setProperty("--a","var("+x[3]+")");
         col.appendChild(cell);
       });
-      (function(dd){ col.addEventListener("click",function(){ selDay=dd; view="now"; render(); window.scrollTo(0,0); }); })(d);
+      if(d===mapDay) col.className+=" pick";
+      (function(dd){ col.addEventListener("click",function(){ mapDay=dd; render(); }); })(d);
       strip.appendChild(col);
     }
-    sk.appendChild(sech("The week's working blocks", filled+" given · "+holes+" empty"));
+    sk.appendChild(sech("The week", filled+" given · "+holes+" empty · tap a day"));
     sk.appendChild(strip);
+    var mds=dayStr(mapDay);
+    sk.appendChild(el("p","daycap",FULL[mapDay]+" "+fmtDay(mds)));
+    (board.week[mapDay]||[]).forEach(function(x,ix){
+      if(x[5]<=x[4]) return;
+      var who=x[6]?planned(mds,ix):"", th=who?T(who):null;
+      var r=el("button","mrow"); r.style.setProperty("--a","var("+(th?th.c:x[3])+")");
+      r.appendChild(el("span","t num",x[0]));
+      var tx=el("span","d");
+      tx.appendChild(el("b","any",x[1]));
+      tx.appendChild(el("span","any", th ? th.n : (x[6] ? "Empty. Tap to put a thread on it." : ((x[2]||"")+(x[8]&&x[8].once?" \u00b7 this week only":"")))));
+      r.appendChild(tx);
+      r.addEventListener("click",function(){ if(x[6]) assignSheet(mds, ix, x, mapDay); else blockSheet(mapDay, x); });
+      sk.appendChild(r);
+    });
+    var ab=el("button","addhere","+ Add to "+FULL[mapDay]);
+    ab.addEventListener("click",function(){ blockSheet(mapDay, null); });
+    sk.appendChild(ab);
     m.appendChild(sk);
   }
 
@@ -1848,11 +1995,15 @@ function openFileSheet(path, t){
   });
 }
 
-function assignSheet(dateStr, blockIx, blk){
+function assignSheet(dateStr, blockIx, blk, dayIx){
   sheet(function(sh){
     var who=planned(dateStr,blockIx), th=who?T(who):null;
     shHead(sh, blk[0]+" \u00b7 "+blk[1], th?th.n:"Nothing on this block");
     sh.appendChild(el("p","note","One block holds one thread. That is the whole rule."));
+    var ed=el("button","wide ghost","Change the time, move it or cancel it");
+    ed.style.margin="6px 0 4px";
+    ed.addEventListener("click",function(){ blockSheet(dayIx==null?new Date(dateStr+"T00:00:00").getDay():dayIx, blk); });
+    sh.appendChild(ed);
     if(th){
       var c=band("", th.c);
       var bts=el("div","thb");
@@ -1976,6 +2127,7 @@ function settings(){
         .then(function(){ return pullAnswers(); })
         .then(function(){ return pullDesk(); })
         .then(function(){ return pullAdded(); })
+        .then(function(){ return pullWeekEdits(); })
         .then(function(){ return pullLog(); })
         .then(function(){
           $("setst").textContent="Connected. Board synced."; $("setst").className="note ok";
@@ -2070,7 +2222,7 @@ if(token){
   flushQueue();
   pullBoard()
     .then(function(j){ if(j){ syncMsg="synced"; render(); } })
-    .then(pullStatus).then(pullPlan).then(pullDates).then(pullTicks).then(pullAnswers).then(pullDesk).then(pullAdded).then(render)
+    .then(pullStatus).then(pullPlan).then(pullDates).then(pullTicks).then(pullAnswers).then(pullDesk).then(pullAdded).then(pullWeekEdits).then(render)
     .catch(function(e){ syncMsg=e.message; render(); });
   pullLog().then(render).catch(function(){});
 }

@@ -367,6 +367,23 @@ nav button[aria-current="page"]{color:var(--accent)}
 .rep2{margin:6px 0 0 18px;padding:9px 13px;border-radius:16px 16px 16px 5px;border:1px solid var(--hair);font-size:.88rem;line-height:1.45;color:var(--ink2)}
 .rep2 b{display:block;font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;color:var(--good);margin-bottom:2px}
 @media (prefers-reduced-motion:reduce){ .rvcard{transition:none!important} }
+.wcol i.fixed{background:color-mix(in srgb,var(--a,var(--neutral)) 30%,transparent)}
+.wcol.pick{box-shadow:inset 0 0 0 2px var(--accent)}
+.daycap{margin:16px 0 4px;font-size:.78rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+.mrow{display:flex;gap:14px;width:100%;padding:12px 0 12px 12px;border-top:1px solid var(--hair);text-align:left;
+  box-shadow:inset 3px 0 0 var(--a)}
+.mrow .t{flex:none;width:6.2rem;font-size:.86rem;color:var(--dim);padding-top:2px}
+.mrow .d{flex:1;min-width:0}
+.mrow .d b{display:block;font-weight:600;font-size:1rem;line-height:1.3}
+.mrow .d span{display:block;font-size:.86rem;color:var(--ink2);margin-top:2px}
+.scoperow{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.sbtn{flex:1 1 9rem;min-height:48px;padding:10px 12px;border-radius:14px;background:var(--sink);font-weight:600;font-size:.92rem;text-align:center}
+.sbtn.on{box-shadow:inset 0 0 0 2px var(--accent);color:var(--accent)}
+.sbtn.pri{background:var(--accent);color:#fff}
+.sbtn.warn{color:var(--bad)}
+.chk{display:flex;align-items:center;gap:10px;margin-top:18px;font-size:.95rem}
+.chk input{width:22px;height:22px}
+input[type=time]{width:100%;min-height:52px;padding:12px 14px;border-radius:14px;border:1.5px solid var(--hair);background:var(--raise);color:var(--ink)}
 .addhere{display:block;width:100%;min-height:48px;margin:6px 0 14px;border-radius:14px;
   border:1.5px dashed var(--hair);color:var(--ink2);font-weight:600;font-size:.92rem;text-align:center}
 </style>
@@ -397,6 +414,6 @@ nav button[aria-current="page"]{color:var(--accent)}
 </nav>
 
 <div id="sheet"></div>
-<script src="app.js?v=18"></script>
+<script src="app.js?v=19"></script>
 </body>
 </html>
