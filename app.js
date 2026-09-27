@@ -6,7 +6,7 @@
 var K    = { tok:"planner.token", repo:"planner.repo", board:"planner.board", focus:"planner.focus",
              mins:"planner.mins", queue:"planner.queue", lang:"planner.lang", theme:"planner.theme",
              running:"planner.running" };
-var BUILD = "2026-09-27.2";   // bumped on every publish, checked against version.json
+var BUILD = "2026-09-27.3";   // bumped on every publish, checked against version.json
 function REPO(){ return getRaw(K.repo) || ""; }
 function API(){ return "https://api.github.com/repos/" + REPO(); }
 
@@ -231,7 +231,7 @@ function pullLog(){
   });
 }
 
-function flushQueue(){
+function flushOnce(){
   if(!token || !queue.length) return Promise.resolve();
   var item = queue[0];
   var p = item.kind==="log"    ? appendLog(item.line)
@@ -244,11 +244,23 @@ function flushQueue(){
         : item.kind==="link"   ? appendLine("desktop/links.jsonl", item.line, "Folder linked from the phone")
         : item.kind==="push"   ? appendLine("data/push.jsonl", item.line, "Notifications set on the phone")
         : item.kind==="week"   ? appendLine("data/week.jsonl", item.line, "Timetable changed from the phone")
+        : item.kind==="todo"   ? appendLine("data/todos.jsonl", item.line, "To-do from the phone")
+        : item.kind==="pin"    ? appendLine("data/pins.jsonl", item.line, "Pinned from the phone")
+        : item.kind==="sugg"   ? appendLine("data/suggestions.jsonl", item.line, "Suggestion decided on the phone")
         : gh("/issues", {method:"POST", body:{title:item.title, body:item.body}});
   return p.then(function(){
     queue.shift(); put(K.queue,queue);
-    return queue.length?flushQueue():null;
+    return queue.length?flushOnce():null;
   }).catch(function(){ /* stay queued */ });
+}
+/* One save at a time. Two overlapping flushes both took the first item in the
+   queue and wrote it twice; now a flush asked for while one runs waits for it
+   and then carries on with whatever is left. */
+var flushing=null;
+function flushQueue(){
+  if(flushing) return flushing.then(function(){ return queue.length ? flushQueue() : null; });
+  flushing = flushOnce().then(function(){ flushing=null; }, function(){ flushing=null; });
+  return flushing;
 }
 
 function loadIssues(force){
@@ -584,6 +596,137 @@ function blockEditor(wrap, d, blk, cls, done){
     acts.appendChild(cx); acts.appendChild(rm);
   }
   wrap.appendChild(acts); wrap.appendChild(msg);
+}
+/* To-dos. data/todos.jsonl, one line per change: {id, thread, text, due, from}
+   to add, {id, done:true} to tick off; the lines for an id are merged in order.
+   They come from the organizer's suggestions, from the thread itself, or from a
+   box ticked in the morning message. */
+var todos = get("planner.todos", {});
+function pullTodos(){
+  return gh("/contents/data/todos.jsonl",{soft404:true}).then(function(r){
+    var m={};
+    readLines(r).forEach(function(o){ if(o.id) m[o.id]=Object.assign(m[o.id]||{}, o); });
+    queue.forEach(function(q){ if(q.kind!=="todo") return; try{ var o=JSON.parse(q.line); m[o.id]=Object.assign(m[o.id]||{}, o); }catch(e){} });
+    todos=m; put("planner.todos", todos);
+  }).catch(function(){});
+}
+function openTodos(tid){
+  return Object.keys(todos).map(function(k){ return todos[k]; })
+    .filter(function(t){ return t.text && !t.done && (!tid || t.thread===tid); })
+    .sort(function(a,b){ return (a.due||"9999")<(b.due||"9999")?-1:((a.due||"9999")>(b.due||"9999")?1:((a.at||"")<(b.at||"")?-1:1)); });
+}
+function todoWhen(t){
+  if(!t.due) return "";
+  var d=t.due, td=localDay();
+  if(d<td) return "late, "+fmtDay(d);
+  if(d===td) return "today";
+  return fmtDay(d);
+}
+function addTodo(tid, text, due, from, quiet){
+  var o={id:"td-"+Date.now().toString(36)+Math.random().toString(36).slice(2,5), thread:tid||null,
+         text:String(text).trim().slice(0,160), due:due||null, from:from||WHERE, at:new Date().toISOString()};
+  if(!o.text) return null;
+  todos[o.id]=o; put("planner.todos", todos);
+  queue.push({kind:"todo", line:JSON.stringify(o)}); put(K.queue,queue);
+  if(!quiet) afterWrite("Added to your list.");
+  return o;
+}
+function doneTodo(id){
+  var o={id:id, done:true, at:new Date().toISOString(), via:WHERE};
+  todos[id]=Object.assign(todos[id]||{}, o); put("planner.todos", todos);
+  queue.push({kind:"todo", line:JSON.stringify(o)}); put(K.queue,queue);
+  afterWrite("Done.");
+}
+
+/* Pins: a starred thread stays at the top. data/pins.jsonl, last line wins. */
+var pins = get("planner.pins", {});
+function pullPins(){
+  return gh("/contents/data/pins.jsonl",{soft404:true}).then(function(r){
+    var m={}; readLines(r).forEach(function(o){ if(o.thread) m[o.thread]=!!o.pin; });
+    pins=m; put("planner.pins", pins);
+  }).catch(function(){});
+}
+function isPinned(t){ return !!pins[t.id]; }
+function togglePin(t){
+  pins[t.id]=!pins[t.id]; put("planner.pins", pins);
+  queue.push({kind:"pin", line:JSON.stringify({thread:t.id, pin:pins[t.id], at:new Date().toISOString(), via:WHERE})});
+  put(K.queue,queue); afterWrite(pins[t.id]?"Pinned to the top.":"Unpinned.");
+}
+function pinnedThreads(){ return board.threads.filter(isPinned); }
+
+/* The organizer. A small open model reads each message on GitHub's servers
+   and proposes: which thread, a one-line summary, to-dos with any day he gave,
+   and a stage if the message says one was reached. Nothing becomes a fact
+   until he taps Apply. data/suggestions.jsonl holds the proposals and his
+   decisions ({id, applied:true} or {id, ignored:true}). */
+var suggestions = {};
+function pullSuggestions(){
+  return gh("/contents/data/suggestions.jsonl",{soft404:true}).then(function(r){
+    var m={};
+    readLines(r).forEach(function(o){ if(o.id) m[o.id]=Object.assign(m[o.id]||{}, o); });
+    queue.forEach(function(q){ if(q.kind!=="sugg") return; try{ var o=JSON.parse(q.line); m[o.id]=Object.assign(m[o.id]||{}, o); }catch(e){} });
+    suggestions=m;
+  }).catch(function(){});
+}
+function openSuggestions(){
+  return Object.keys(suggestions).map(function(k){ return suggestions[k]; })
+    .filter(function(s){ return !s.applied && !s.ignored && (s.summary || (s.todos||[]).length || s.stage); })
+    .sort(function(a,b){ return (b.at||"")<(a.at||"")?-1:1; });
+}
+function decideSuggestion(sg, apply, pickTodos, pickStage){
+  var t=sg.thread?T(sg.thread):null, n=0;
+  if(apply){
+    (sg.todos||[]).forEach(function(x,i){ if(pickTodos[i]){ addTodo(sg.thread, x.text, x.due, "#"+sg.issue, true); n++; } });
+    if(pickStage && t && sg.stage){ var ix=(t.st||[]).indexOf(sg.stage); if(ix>=0) setStage(t, ix); }
+  }
+  var o={id:sg.id}; o[apply?"applied":"ignored"]=true; o.at=new Date().toISOString(); o.via=WHERE;
+  suggestions[sg.id]=Object.assign(sg, o);
+  queue.push({kind:"sugg", line:JSON.stringify(o)}); put(K.queue,queue);
+  afterWrite(apply ? (n+" added"+(pickStage&&sg.stage?(", stage set to "+sg.stage):"")+".") : "Ignored.");
+}
+/* One card, both apps: the summary, a checkbox per suggested to-do and for the
+   stage, then Apply and Ignore. cls names the host app's classes. */
+function suggestionCard(sg, cls){
+  var t=sg.thread?T(sg.thread):null;
+  var box=el("div",cls.box);
+  box.appendChild(el("span",cls.kicker,"From your message"+(t?(" · "+t.n):"")));
+  if(sg.summary) box.appendChild(el("p",cls.text,sg.summary));
+  var picks=[], stagePick={v:!!sg.stage};
+  function check(label, on, set){
+    var l=el("label",cls.check); var c=document.createElement("input"); c.type="checkbox"; c.checked=on;
+    c.addEventListener("change",function(){ set(c.checked); });
+    l.appendChild(c); l.appendChild(el("span",null,label)); box.appendChild(l);
+  }
+  (sg.todos||[]).forEach(function(x,i){ picks[i]=true; check(x.text+(x.due?(" · "+fmtDay(x.due)):""), true, function(v){ picks[i]=v; }); });
+  if(sg.stage && t) check("Move "+t.n+" to "+sg.stage, true, function(v){ stagePick.v=v; });
+  var row=el("div",cls.row);
+  var a=el("button",cls.pri,"Apply"); a.addEventListener("click",function(){ decideSuggestion(sg,true,picks,stagePick.v); });
+  var ig=el("button",cls.btn,"Ignore"); ig.addEventListener("click",function(){ decideSuggestion(sg,false,picks,false); });
+  row.appendChild(a); row.appendChild(ig); box.appendChild(row);
+  return box;
+}
+
+/* A meeting note: who, what was decided, what each person does next. The
+   organizer reads the actions as to-dos. */
+function meetingBody(who, decided, actions, notes){
+  var out=[];
+  if(who) out.push("**With:** "+who);
+  if(decided) out.push("**Decided:**\n"+decided.split("\n").filter(Boolean).map(function(l){ return "- "+l.replace(/^[-*•]\s*/,""); }).join("\n"));
+  if(actions) out.push("**Actions:**\n"+actions.split("\n").filter(Boolean).map(function(l){ return "- "+l.replace(/^[-*•]\s*/,""); }).join("\n"));
+  if(notes) out.push(notes);
+  return out.join("\n\n");
+}
+
+/* Search across everything the app holds: threads, to-dos, messages. */
+function searchAll(q){
+  q=String(q||"").trim().toLowerCase();
+  if(q.length<2) return {threads:[], todos:[], msgs:[]};
+  function has(s){ return String(s||"").toLowerCase().indexOf(q)>=0; }
+  return {
+    threads: board.threads.filter(function(t){ return has(t.n)||has(t.next)||has(t.why)||has(t.who)||has(t.tag); }).slice(0,12),
+    todos: Object.keys(todos).map(function(k){ return todos[k]; }).filter(function(t){ return t.text && has(t.text); }).slice(0,12),
+    msgs: (mine||[]).filter(function(x){ return has(x.title)||has(x.body)||(replies[x.number]&&has(replies[x.number].text)); }).slice(0,12)
+  };
 }
 function localDay(){
   var d=new Date();
@@ -1014,6 +1157,21 @@ function vNow(m){
   var qq=todaysQuestion();
   if(qq) m.appendChild(questionCard(qq));
   unlinked.slice(0,3).forEach(function(u){ m.appendChild(linkCard(u)); });
+  openSuggestions().slice(0,3).forEach(function(sg){ m.appendChild(suggestionCard(sg, SCLS)); });
+
+  var pinned=pinnedThreads();
+  if(pinned.length){
+    var sp=el("div","sec"); sp.appendChild(sech("Pinned", String(pinned.length)));
+    pinned.forEach(function(t){ sp.appendChild(threadRow(t)); });
+    m.appendChild(sp);
+  }
+  var tds=openTodos();
+  if(tds.length){
+    var st=el("div","sec"); st.appendChild(sech("To do", tds.length+" open"));
+    tds.slice(0,8).forEach(function(td){ st.appendChild(todoRow(td)); });
+    if(tds.length>8) st.appendChild(el("p","note","and "+(tds.length-8)+" more, on each path"));
+    m.appendChild(st);
+  }
 
   var chase=board.threads.filter(needsChase);
   if(chase.length){
@@ -1152,6 +1310,19 @@ function questionCard(q){
     c.appendChild(nx);
   }
   return c;
+}
+var SCLS={box:"band qcard sugg", kicker:"kicker tag", text:"qq sm any", check:"chk", row:"scoperow", pri:"sbtn pri", btn:"sbtn"};
+function todoRow(td){
+  var t=td.thread?T(td.thread):null;
+  var r=el("div","todo"); r.style.setProperty("--a","var("+(t?t.c:"--neutral")+")");
+  var c=el("button","tick"); c.setAttribute("aria-label","Mark done");
+  c.addEventListener("click",function(){ c.classList.add("on"); setTimeout(function(){ doneTodo(td.id); },220); });
+  r.appendChild(c);
+  var tx=el("span","tt"); tx.appendChild(el("b","any",td.text));
+  var sub=[t?t.n:"", todoWhen(td)].filter(Boolean).join(" \u00b7 ");
+  if(sub) tx.appendChild(el("span","any"+(td.due&&td.due<localDay()?" late":""),sub));
+  r.appendChild(tx);
+  return r;
 }
 function linkCard(u){
   var c=band("qcard","--accent");
@@ -1574,6 +1745,23 @@ function vThreads(m){
     board.threads.forEach(function(t){ w0.appendChild(threadCard(t)); });
     m.appendChild(w0); return;
   }
+  var sq=document.createElement("input"); sq.type="search"; sq.className="searchin"; sq.id="searchin";
+  sq.placeholder="Search projects, to-dos and messages"; sq.setAttribute("dir","auto"); sq.value=searchQ;
+  var res=el("div","searchres");
+  function paintResults(){
+    res.innerHTML=""; searchQ=sq.value;
+    if(searchQ.trim().length<2) return;
+    if(mine===null && !loadingMine){ loadingMine=true; loadMine(true).then(function(){ loadingMine=false; paintResults(); }); }
+    var r=searchAll(searchQ), any=false;
+    if(r.threads.length){ any=true; res.appendChild(sech("Projects")); r.threads.forEach(function(t){ res.appendChild(threadRow(t)); }); }
+    if(r.todos.length){ any=true; res.appendChild(sech("To-dos")); r.todos.forEach(function(td){ res.appendChild(td.done?el("p","note any","\u2713 "+td.text):todoRow(td)); }); }
+    if(r.msgs.length){ any=true; res.appendChild(sech("Messages"));
+      r.msgs.forEach(function(x){ var b=el("button","bub "+msgState(x)); b.appendChild(el("b","any",x.title)); var ft=firstLine(x.body); if(ft) b.appendChild(el("span","bt any",ft));
+        b.addEventListener("click",function(){ openIssue(x); }); res.appendChild(b); }); }
+    if(!any) res.appendChild(el("p","note","Nothing matches."));
+  }
+  sq.addEventListener("input",paintResults);
+  m.appendChild(sq); m.appendChild(res); paintResults();
   var addB=el("button","wide ghost","+ Add something new");
   addB.style.marginTop="4px";
   addB.addEventListener("click",function(){ addSheet(openDom||""); });
@@ -1668,16 +1856,16 @@ function addSheet(dom){
 }
 
 /* ---------- say ---------- */
-var sayThread="", sayKind="Update", sayText="";
+var sayThread="", sayKind="Update", sayText="", sayWho="", sayDecided="", sayActions="", searchQ="";
 function vSay(m){
   var c=band("flat"); c.style.marginTop="2px";
 
   var f1=el("div","fld"); f1.appendChild(el("label","tag","Kind"));
   var s1=el("select");
-  ["Update","Answer","Decision","New thread","Ask"].forEach(function(k){
+  ["Update","Meeting","Answer","Decision","New thread","Ask"].forEach(function(k){
     var o=el("option",null,k); o.value=k; if(k===sayKind) o.selected=true; s1.appendChild(o);
   });
-  s1.addEventListener("change",function(){ sayKind=s1.value; });
+  s1.addEventListener("change",function(){ sayKind=s1.value; var box=$("sayta"); if(box) sayText=box.value; render(); });
   f1.appendChild(s1); c.appendChild(f1);
 
   var f2=el("div","fld"); f2.appendChild(el("label","tag","About"));
@@ -1689,7 +1877,19 @@ function vSay(m){
   s2.addEventListener("change",function(){ sayThread=s2.value; });
   f2.appendChild(s2); c.appendChild(f2);
 
-  var f3=el("div","fld"); f3.appendChild(el("label","tag","What happened"));
+  if(sayKind==="Meeting"){
+    [["With whom","sayWho",1,"Names, as you want them written"],["Decided","sayDecided",3,"One decision per line"],
+     ["Actions","sayActions",3,"One per line: who does what, by when"]].forEach(function(x){
+      var f=el("div","fld"); f.appendChild(el("label","tag",x[0]));
+      var ta0=el(x[2]>1?"textarea":"input"); if(x[2]===1) ta0.type="text"; else ta0.rows=x[2];
+      ta0.id=x[1]; ta0.setAttribute("dir","auto"); ta0.placeholder=x[3];
+      ta0.value={sayWho:sayWho,sayDecided:sayDecided,sayActions:sayActions}[x[1]];
+      ta0.addEventListener("input",function(){ if(x[1]==="sayWho") sayWho=ta0.value; else if(x[1]==="sayDecided") sayDecided=ta0.value; else sayActions=ta0.value; });
+      if(x[2]>1) ta0.style.minHeight="6.5rem";
+      f.appendChild(ta0); c.appendChild(f);
+    });
+  }
+  var f3=el("div","fld"); f3.appendChild(el("label","tag", sayKind==="Meeting"?"Notes":"What happened"));
   var ta=el("textarea"); ta.id="sayta"; ta.setAttribute("dir","auto");
   ta.placeholder="Speak or type."; ta.value=sayText;
   ta.addEventListener("input",function(){ sayText=ta.value; });
@@ -1714,6 +1914,7 @@ function vSay(m){
   var send=el("button","wide","Send to Claude");
   send.addEventListener("click",function(){
     var box=$("sayta"), v=box?box.value.trim():"";
+    if(sayKind==="Meeting") v=meetingBody(sayWho.trim(), sayDecided.trim(), sayActions.trim(), v);
     if(!v) return;
     recStop();
     var th=sayThread?T(sayThread):null;
@@ -1721,7 +1922,7 @@ function vSay(m){
     var body=v+"\n\n---\n"+(th?("Thread: `"+th.id+"` — "+th.n+"\n"):"")+
              "Sent from the Planner app, "+new Date().toISOString()+".";
     queue.push({kind:"issue", title:title, body:body}); put(K.queue,queue);
-    box.value=""; sayText=""; sayThread=""; recHint="";
+    box.value=""; sayText=""; sayThread=""; recHint=""; sayWho=""; sayDecided=""; sayActions="";
     syncMsg=queue.length+" queued"; render();
     flushQueue().then(function(){
       syncMsg = queue.length ? (queue.length+" still queued, no signal") : "Sent.";
@@ -1853,6 +2054,9 @@ function openThread(t){
   sheet(function(sh){
     var on=isOn(t.id), dm=domOf(t);
     shHead(sh, dm?dm.n:(goalOf(t)?("For: "+goalOf(t).n):"A path"), t.n);
+    var pb=el("button","pinb"+(isPinned(t)?" on":""), isPinned(t)?"\u2605 Pinned to the top":"\u2606 Pin to the top");
+    pb.addEventListener("click",function(){ togglePin(t); closeSheet(); });
+    sh.appendChild(pb);
     if(t.why) sh.appendChild(el("p","note any",t.why)).style.color="var(--ink2)";
 
     var c=band("", t.c);
@@ -1898,6 +2102,17 @@ function openThread(t){
     box.appendChild(ns);
     s.appendChild(box);
     sh.appendChild(s);
+
+    var tdl=openTodos(t.id);
+    var stt=el("div","sec"); stt.appendChild(sech("To do", tdl.length?(tdl.length+" open"):"nothing yet"));
+    tdl.forEach(function(td){ stt.appendChild(todoRow(td)); });
+    var ar=el("div","addtodo");
+    var ai=document.createElement("input"); ai.type="text"; ai.placeholder="Add a to-do for this"; ai.setAttribute("dir","auto");
+    var ad=document.createElement("input"); ad.type="date"; ad.title="Its day, if it has one";
+    var ab=el("button","sbtn pri","Add");
+    ab.addEventListener("click",function(){ if(ai.value.trim()){ addTodo(t.id, ai.value, ad.value||null, WHERE); closeSheet(); openThread(t); } });
+    ar.appendChild(ai); ar.appendChild(ad); ar.appendChild(ab); stt.appendChild(ar);
+    sh.appendChild(stt);
 
     var cur=doDate(t);
     var sd=el("div","sec");
@@ -2128,6 +2343,7 @@ function settings(){
         .then(function(){ return pullDesk(); })
         .then(function(){ return pullAdded(); })
         .then(function(){ return pullWeekEdits(); })
+        .then(function(){ return pullTodos(); }).then(function(){ return pullPins(); }).then(function(){ return pullSuggestions(); })
         .then(function(){ return pullLog(); })
         .then(function(){
           $("setst").textContent="Connected. Board synced."; $("setst").className="note ok";
@@ -2222,7 +2438,7 @@ if(token){
   flushQueue();
   pullBoard()
     .then(function(j){ if(j){ syncMsg="synced"; render(); } })
-    .then(pullStatus).then(pullPlan).then(pullDates).then(pullTicks).then(pullAnswers).then(pullDesk).then(pullAdded).then(pullWeekEdits).then(render)
+    .then(pullStatus).then(pullPlan).then(pullDates).then(pullTicks).then(pullAnswers).then(pullDesk).then(pullAdded).then(pullWeekEdits).then(pullTodos).then(pullPins).then(pullSuggestions).then(render)
     .catch(function(e){ syncMsg=e.message; render(); });
   pullLog().then(render).catch(function(){});
 }

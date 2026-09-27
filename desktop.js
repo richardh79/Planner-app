@@ -11,7 +11,7 @@
 (function(){
 "use strict";
 
-var BUILD = "2026-09-27.2";   // bumped on every publish, checked against version.json
+var BUILD = "2026-09-27.3";   // bumped on every publish, checked against version.json
 var K = { tok:"planner.token", repo:"planner.repo", board:"planner.board",
           mins:"planner.mins", queue:"planner.queue", theme:"planner.theme",
           running:"planner.running", sel:"planner.sel", lang:"planner.lang" };
@@ -369,7 +369,7 @@ function loadIssues(){
   }).catch(function(e){ issuesErr=e.message; });
 }
 
-function flushQueue(){
+function flushOnce(){
   if(!token || !queue.length) return Promise.resolve();
   var item=queue[0], p;
   if(item.kind==="log")       p=appendLine("data/log.jsonl", item.line, "Session log");
@@ -382,11 +382,23 @@ function flushQueue(){
   else if(item.kind==="link")   p=appendLine("desktop/links.jsonl", item.line, "Folder linked from the desktop");
   else if(item.kind==="push")   p=appendLine("data/push.jsonl", item.line, "Notifications set on the desktop");
   else if(item.kind==="week")   p=appendLine("data/week.jsonl", item.line, "Timetable changed from the desktop");
+  else if(item.kind==="todo")   p=appendLine("data/todos.jsonl", item.line, "To-do from the desktop");
+  else if(item.kind==="pin")    p=appendLine("data/pins.jsonl", item.line, "Pinned from the desktop");
+  else if(item.kind==="sugg")   p=appendLine("data/suggestions.jsonl", item.line, "Suggestion decided on the desktop");
   else                        p=gh("/issues", {method:"POST", body:{title:item.title, body:item.body}});
   return p.then(function(){
     queue.shift(); put(K.queue,queue);
-    return queue.length ? flushQueue() : null;
+    return queue.length ? flushOnce() : null;
   }).catch(function(){ /* stays queued */ });
+}
+/* One save at a time. Two overlapping flushes both took the first item in the
+   queue and wrote it twice; now a flush asked for while one runs waits for it
+   and then carries on with whatever is left. */
+var flushing=null;
+function flushQueue(){
+  if(flushing) return flushing.then(function(){ return queue.length ? flushQueue() : null; });
+  flushing = flushOnce().then(function(){ flushing=null; }, function(){ flushing=null; });
+  return flushing;
 }
 
 /* ---------- sync ---------- */
@@ -403,7 +415,7 @@ function sync(){
   if(!connected()){ stateMsg=""; render(); return Promise.resolve(); }
   busy=true; note("Syncing…");
   return flushQueue()
-    .then(pullBoard).then(pullStatus).then(pullPlan).then(pullDates).then(pullTicks).then(pullAnswers).then(pullDesk).then(pullAdded).then(pullWeekEdits).then(pullLog).then(loadIssues)
+    .then(pullBoard).then(pullStatus).then(pullPlan).then(pullDates).then(pullTicks).then(pullAnswers).then(pullDesk).then(pullAdded).then(pullWeekEdits).then(pullTodos).then(pullPins).then(pullSuggestions).then(pullLog).then(loadIssues)
     .then(function(){ return loadMine(true); })
     .then(function(){ busy=false; lastSync=Date.now(); stateMsg=""; render(); })
     .catch(function(e){ busy=false; note(e.message,"bad"); render(); });
@@ -731,6 +743,137 @@ function blockEditor(wrap, d, blk, cls, done){
     acts.appendChild(cx); acts.appendChild(rm);
   }
   wrap.appendChild(acts); wrap.appendChild(msg);
+}
+/* To-dos. data/todos.jsonl, one line per change: {id, thread, text, due, from}
+   to add, {id, done:true} to tick off; the lines for an id are merged in order.
+   They come from the organizer's suggestions, from the thread itself, or from a
+   box ticked in the morning message. */
+var todos = get("planner.todos", {});
+function pullTodos(){
+  return gh("/contents/data/todos.jsonl",{soft404:true}).then(function(r){
+    var m={};
+    readLines(r).forEach(function(o){ if(o.id) m[o.id]=Object.assign(m[o.id]||{}, o); });
+    queue.forEach(function(q){ if(q.kind!=="todo") return; try{ var o=JSON.parse(q.line); m[o.id]=Object.assign(m[o.id]||{}, o); }catch(e){} });
+    todos=m; put("planner.todos", todos);
+  }).catch(function(){});
+}
+function openTodos(tid){
+  return Object.keys(todos).map(function(k){ return todos[k]; })
+    .filter(function(t){ return t.text && !t.done && (!tid || t.thread===tid); })
+    .sort(function(a,b){ return (a.due||"9999")<(b.due||"9999")?-1:((a.due||"9999")>(b.due||"9999")?1:((a.at||"")<(b.at||"")?-1:1)); });
+}
+function todoWhen(t){
+  if(!t.due) return "";
+  var d=t.due, td=localDay();
+  if(d<td) return "late, "+fmtDay(d);
+  if(d===td) return "today";
+  return fmtDay(d);
+}
+function addTodo(tid, text, due, from, quiet){
+  var o={id:"td-"+Date.now().toString(36)+Math.random().toString(36).slice(2,5), thread:tid||null,
+         text:String(text).trim().slice(0,160), due:due||null, from:from||WHERE, at:new Date().toISOString()};
+  if(!o.text) return null;
+  todos[o.id]=o; put("planner.todos", todos);
+  queue.push({kind:"todo", line:JSON.stringify(o)}); put(K.queue,queue);
+  if(!quiet) afterWrite("Added to your list.");
+  return o;
+}
+function doneTodo(id){
+  var o={id:id, done:true, at:new Date().toISOString(), via:WHERE};
+  todos[id]=Object.assign(todos[id]||{}, o); put("planner.todos", todos);
+  queue.push({kind:"todo", line:JSON.stringify(o)}); put(K.queue,queue);
+  afterWrite("Done.");
+}
+
+/* Pins: a starred thread stays at the top. data/pins.jsonl, last line wins. */
+var pins = get("planner.pins", {});
+function pullPins(){
+  return gh("/contents/data/pins.jsonl",{soft404:true}).then(function(r){
+    var m={}; readLines(r).forEach(function(o){ if(o.thread) m[o.thread]=!!o.pin; });
+    pins=m; put("planner.pins", pins);
+  }).catch(function(){});
+}
+function isPinned(t){ return !!pins[t.id]; }
+function togglePin(t){
+  pins[t.id]=!pins[t.id]; put("planner.pins", pins);
+  queue.push({kind:"pin", line:JSON.stringify({thread:t.id, pin:pins[t.id], at:new Date().toISOString(), via:WHERE})});
+  put(K.queue,queue); afterWrite(pins[t.id]?"Pinned to the top.":"Unpinned.");
+}
+function pinnedThreads(){ return board.threads.filter(isPinned); }
+
+/* The organizer. A small open model reads each message on GitHub's servers
+   and proposes: which thread, a one-line summary, to-dos with any day he gave,
+   and a stage if the message says one was reached. Nothing becomes a fact
+   until he taps Apply. data/suggestions.jsonl holds the proposals and his
+   decisions ({id, applied:true} or {id, ignored:true}). */
+var suggestions = {};
+function pullSuggestions(){
+  return gh("/contents/data/suggestions.jsonl",{soft404:true}).then(function(r){
+    var m={};
+    readLines(r).forEach(function(o){ if(o.id) m[o.id]=Object.assign(m[o.id]||{}, o); });
+    queue.forEach(function(q){ if(q.kind!=="sugg") return; try{ var o=JSON.parse(q.line); m[o.id]=Object.assign(m[o.id]||{}, o); }catch(e){} });
+    suggestions=m;
+  }).catch(function(){});
+}
+function openSuggestions(){
+  return Object.keys(suggestions).map(function(k){ return suggestions[k]; })
+    .filter(function(s){ return !s.applied && !s.ignored && (s.summary || (s.todos||[]).length || s.stage); })
+    .sort(function(a,b){ return (b.at||"")<(a.at||"")?-1:1; });
+}
+function decideSuggestion(sg, apply, pickTodos, pickStage){
+  var t=sg.thread?T(sg.thread):null, n=0;
+  if(apply){
+    (sg.todos||[]).forEach(function(x,i){ if(pickTodos[i]){ addTodo(sg.thread, x.text, x.due, "#"+sg.issue, true); n++; } });
+    if(pickStage && t && sg.stage){ var ix=(t.st||[]).indexOf(sg.stage); if(ix>=0) setStage(t, ix); }
+  }
+  var o={id:sg.id}; o[apply?"applied":"ignored"]=true; o.at=new Date().toISOString(); o.via=WHERE;
+  suggestions[sg.id]=Object.assign(sg, o);
+  queue.push({kind:"sugg", line:JSON.stringify(o)}); put(K.queue,queue);
+  afterWrite(apply ? (n+" added"+(pickStage&&sg.stage?(", stage set to "+sg.stage):"")+".") : "Ignored.");
+}
+/* One card, both apps: the summary, a checkbox per suggested to-do and for the
+   stage, then Apply and Ignore. cls names the host app's classes. */
+function suggestionCard(sg, cls){
+  var t=sg.thread?T(sg.thread):null;
+  var box=el("div",cls.box);
+  box.appendChild(el("span",cls.kicker,"From your message"+(t?(" · "+t.n):"")));
+  if(sg.summary) box.appendChild(el("p",cls.text,sg.summary));
+  var picks=[], stagePick={v:!!sg.stage};
+  function check(label, on, set){
+    var l=el("label",cls.check); var c=document.createElement("input"); c.type="checkbox"; c.checked=on;
+    c.addEventListener("change",function(){ set(c.checked); });
+    l.appendChild(c); l.appendChild(el("span",null,label)); box.appendChild(l);
+  }
+  (sg.todos||[]).forEach(function(x,i){ picks[i]=true; check(x.text+(x.due?(" · "+fmtDay(x.due)):""), true, function(v){ picks[i]=v; }); });
+  if(sg.stage && t) check("Move "+t.n+" to "+sg.stage, true, function(v){ stagePick.v=v; });
+  var row=el("div",cls.row);
+  var a=el("button",cls.pri,"Apply"); a.addEventListener("click",function(){ decideSuggestion(sg,true,picks,stagePick.v); });
+  var ig=el("button",cls.btn,"Ignore"); ig.addEventListener("click",function(){ decideSuggestion(sg,false,picks,false); });
+  row.appendChild(a); row.appendChild(ig); box.appendChild(row);
+  return box;
+}
+
+/* A meeting note: who, what was decided, what each person does next. The
+   organizer reads the actions as to-dos. */
+function meetingBody(who, decided, actions, notes){
+  var out=[];
+  if(who) out.push("**With:** "+who);
+  if(decided) out.push("**Decided:**\n"+decided.split("\n").filter(Boolean).map(function(l){ return "- "+l.replace(/^[-*•]\s*/,""); }).join("\n"));
+  if(actions) out.push("**Actions:**\n"+actions.split("\n").filter(Boolean).map(function(l){ return "- "+l.replace(/^[-*•]\s*/,""); }).join("\n"));
+  if(notes) out.push(notes);
+  return out.join("\n\n");
+}
+
+/* Search across everything the app holds: threads, to-dos, messages. */
+function searchAll(q){
+  q=String(q||"").trim().toLowerCase();
+  if(q.length<2) return {threads:[], todos:[], msgs:[]};
+  function has(s){ return String(s||"").toLowerCase().indexOf(q)>=0; }
+  return {
+    threads: board.threads.filter(function(t){ return has(t.n)||has(t.next)||has(t.why)||has(t.who)||has(t.tag); }).slice(0,12),
+    todos: Object.keys(todos).map(function(k){ return todos[k]; }).filter(function(t){ return t.text && has(t.text); }).slice(0,12),
+    msgs: (mine||[]).filter(function(x){ return has(x.title)||has(x.body)||(replies[x.number]&&has(replies[x.number].text)); }).slice(0,12)
+  };
 }
 function localDay(){
   var d=new Date();
@@ -1220,6 +1363,21 @@ function listToday(n){
     return;
   }
 
+  var sgs=openSuggestions();
+  if(sgs.length){
+    n.appendChild(el("div","railh lab","From your messages, "+sgs.length));
+    sgs.slice(0,3).forEach(function(sg){ n.appendChild(suggestionCard(sg, DSCLS)); });
+  }
+  var pn=pinnedThreads();
+  if(pn.length){
+    n.appendChild(el("div","railh lab","Pinned"));
+    pn.forEach(function(t){ threadRow(n,t); });
+  }
+  var tds=openTodos();
+  if(tds.length){
+    n.appendChild(el("div","railh lab","To do, "+tds.length));
+    tds.slice(0,10).forEach(function(td){ n.appendChild(todoRowD(td)); });
+  }
   if(unlinked.length){
     n.appendChild(el("div","railh lab","Desktop folders to link, "+unlinked.length));
     unlinked.slice(0,4).forEach(function(u){ n.appendChild(linkBox(u)); });
@@ -1892,6 +2050,9 @@ function detailThread(d,t){
   var m=liveMins(t.id);
   if(m>=1) meta.appendChild(el("span",null,dur(m)+" in seven days"));
   if(t.who) meta.appendChild(el("span",null,"with "+t.who));
+  var pinb=el("button","pill pinp"+(isPinned(t)?" on":""), isPinned(t)?"\u2605 pinned":"\u2606 pin");
+  pinb.type="button"; pinb.addEventListener("click",function(){ togglePin(t); });
+  meta.appendChild(pinb);
   d.appendChild(meta);
 
   if(t.why) d.appendChild(el("p","lead wrapall",t.why));
@@ -1981,13 +2142,33 @@ function detailThread(d,t){
   }
   d.appendChild(s3);
 
+  // to-dos
+  var stt=el("div","sec"); var tl=openTodos(t.id);
+  var hT=el("div","lh"); hT.appendChild(el("h3","lab","To do")); hT.appendChild(el("span",null,tl.length?(tl.length+" open"):"nothing yet")); stt.appendChild(hT);
+  tl.forEach(function(td){ stt.appendChild(todoRowD(td,true)); });
+  var ar=el("div","addtodo");
+  var ai=document.createElement("input"); ai.type="text"; ai.placeholder="Add a to-do for this"; ai.setAttribute("dir","auto");
+  var adt=document.createElement("input"); adt.type="date"; adt.title="Its day, if it has one";
+  var abt=el("button","btn pri","Add");
+  function addIt(){ if(ai.value.trim()){ addTodo(t.id, ai.value, adt.value||null, WHERE); ai.value=""; } }
+  abt.addEventListener("click",addIt); ai.addEventListener("keydown",function(e){ if(e.key==="Enter") addIt(); });
+  ar.appendChild(ai); ar.appendChild(adt); ar.appendChild(abt); stt.appendChild(ar);
+  d.appendChild(stt);
+
   // comment
   var s4=el("div","sec"); s4.appendChild(el("h3","lab","Say something about this"));
   var kind=document.createElement("select");
-  ["Update","Decision","Ask","New thread"].forEach(function(k){
+  ["Update","Meeting","Decision","Ask","New thread"].forEach(function(k){
     var o=document.createElement("option"); o.value=k; o.textContent=k; kind.appendChild(o);
   });
   kind.style.marginBottom="8px"; s4.appendChild(kind);
+  var mt=el("div","meetf"); mt.hidden=true;
+  var mWho=document.createElement("input"); mWho.type="text"; mWho.placeholder="With whom"; mWho.setAttribute("dir","auto");
+  var mDec=document.createElement("textarea"); mDec.placeholder="Decided, one per line"; mDec.setAttribute("dir","auto");
+  var mAct=document.createElement("textarea"); mAct.placeholder="Actions, one per line: who does what, by when"; mAct.setAttribute("dir","auto");
+  [mWho,mDec,mAct].forEach(function(x){ x.style.marginBottom="8px"; mt.appendChild(x); });
+  s4.appendChild(mt);
+  kind.addEventListener("change",function(){ mt.hidden = kind.value!=="Meeting"; ta.placeholder = kind.value==="Meeting" ? "Notes" : "What happened, what changed, what you decided. Speak it or type it."; });
   var ta=document.createElement("textarea");
   ta.placeholder="What happened, what changed, what you decided. Speak it or type it.";
   s4.appendChild(ta);
@@ -1995,8 +2176,10 @@ function detailThread(d,t){
   var br=el("div","btnrow");
   var send=withIcon(el("button","btn pri","Send"),"chat");
   send.addEventListener("click",function(){
-    var v=ta.value.trim(); if(!v) return;
-    ta.value=""; comment(t,kind.value,v);
+    var v=ta.value.trim();
+    if(kind.value==="Meeting") v=meetingBody(mWho.value.trim(), mDec.value.trim(), mAct.value.trim(), v);
+    if(!v) return;
+    ta.value=""; mWho.value=""; mDec.value=""; mAct.value=""; comment(t,kind.value,v);
   });
   br.appendChild(send);
   s4.appendChild(br);
@@ -2209,6 +2392,19 @@ function lookCard(grid, title, sub, go, span){
 }
 function goTo(kind,id){ return function(){ sel={kind:kind,id:id||""}; put(K.sel,sel); selThread=""; file=null; render(); }; }
 function weekDate(n){ var x=new Date(); x.setDate(x.getDate()+(n-x.getDay())); return x.getFullYear()+"-"+("0"+(x.getMonth()+1)).slice(-2)+"-"+("0"+x.getDate()).slice(-2); }
+var DSCLS={box:"qbox compact sugg", kicker:"lab", text:"wrapall sgt", check:"achk", row:"qopts", pri:"btn pri", btn:"btn"};
+function todoRowD(td, hideThread){
+  var t=td.thread?T(td.thread):null;
+  var r=el("div","todo"); r.style.setProperty("--a",cvar(t?t.c:"--neutral"));
+  var c=el("button","tick"); c.type="button"; c.title="Mark done";
+  c.addEventListener("click",function(){ c.classList.add("on"); setTimeout(function(){ doneTodo(td.id); },200); });
+  r.appendChild(c);
+  var tx=el("span","tt"); tx.appendChild(el("b","wrapall",td.text));
+  var sub=[hideThread?"":(t?t.n:""), todoWhen(td)].filter(Boolean).join(" \u00b7 ");
+  if(sub) tx.appendChild(el("span","wrapall"+(td.due&&td.due<localDay()?" late":""),sub));
+  r.appendChild(tx);
+  return r;
+}
 function linkBox(u){
   var box=el("div","qbox compact");
   box.appendChild(el("b","wrapall","Folder \u201C"+u.folder+"\u201D, "+dur(u.min)+" in "+u.n+" session"+(u.n===1?"":"s")+". Which project?"));
@@ -2341,6 +2537,12 @@ function detailLook(d){
     });
   }
 
+  var tdl=openTodos();
+  var c8=lookCard(g,"To do", tdl.length?(tdl.length+" open"):"nothing open", goTo("today"));
+  openSuggestions().slice(0,2).forEach(function(sg){ c8.appendChild(suggestionCard(sg, DSCLS)); });
+  if(!tdl.length) c8.appendChild(el("p","note","Nothing on the list. To-dos come from your messages, or add one on any path."));
+  tdl.slice(0,7).forEach(function(td){ c8.appendChild(todoRowD(td)); });
+
   var c6=lookCard(g,"Your messages", null, goTo("inbox"));
   if(!mine){ c6.appendChild(el("p","note","Loading.")); if(!loadingMine){ loadingMine=true; loadMine(true).then(function(){ loadingMine=false; render(); }); } }
   else if(!mine.length) c6.appendChild(el("p","note","Nothing sent yet."));
@@ -2393,6 +2595,13 @@ function paletteItems(){
     out.push({label:p[0], hint:"view", c:"", run:function(){ pick(p[1],""); }});
   });
   out.push({label:"Settings", hint:"connection", c:"", run:function(){ settings(); }});
+  openTodos().forEach(function(td){
+    var t=td.thread?T(td.thread):null;
+    out.push({label:"To do: "+td.text, hint:t?t.n:"to-do", c:t?t.c:"", run:function(){ if(t){ sel={kind:"domain",id:t.dom}; put(K.sel,sel); openThread(t.id); } else pick("today",""); }});
+  });
+  (mine||[]).forEach(function(x){
+    out.push({label:"Message: "+x.title+" "+firstLine(x.body), hint:msgState(x), c:"", run:function(){ sel={kind:"inbox",id:String(x.number)}; put(K.sel,sel); document.body.classList.add("detail-open"); render(); }});
+  });
   board.threads.forEach(function(t){
     (t.files||[]).forEach(function(p){
       out.push({label:p, hint:"file", c:t.c, run:function(){ selThread=t.id; openFile(p); }});
