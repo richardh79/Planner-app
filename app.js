@@ -6,7 +6,7 @@
 var K    = { tok:"planner.token", repo:"planner.repo", board:"planner.board", focus:"planner.focus",
              mins:"planner.mins", queue:"planner.queue", lang:"planner.lang", theme:"planner.theme",
              running:"planner.running" };
-var BUILD = "2026-09-26.7";   // bumped on every publish, checked against version.json
+var BUILD = "2026-09-27.1";   // bumped on every publish, checked against version.json
 function REPO(){ return getRaw(K.repo) || ""; }
 function API(){ return "https://api.github.com/repos/" + REPO(); }
 
@@ -68,6 +68,7 @@ function runCount(){ return runningIds().length; }
 var mins  = get(K.mins, {});
 var queue = get(K.queue, []);
 var view  = "now";
+(function(){ var h=(location.hash||"").slice(1); if(/^(now|map|threads|say|inbox)$/.test(h)) view=h; })();
 var selDay = new Date().getDay();
 var issues = null, issuesAt = 0, issuesErr = "";
 var syncMsg = "";
@@ -240,6 +241,7 @@ function flushQueue(){
         : item.kind==="answer" ? appendLine("data/answers.jsonl", item.line, "Question answered from the phone")
         : item.kind==="added"  ? appendLine("data/added.jsonl", item.line, "Added from the phone")
         : item.kind==="link"   ? appendLine("desktop/links.jsonl", item.line, "Folder linked from the phone")
+        : item.kind==="push"   ? appendLine("data/push.jsonl", item.line, "Notifications set on the phone")
         : gh("/issues", {method:"POST", body:{title:item.title, body:item.body}});
   return p.then(function(){
     queue.shift(); put(K.queue,queue);
@@ -394,6 +396,77 @@ function addThread(o){
          "\n\nFile it: project file, goal, and board.json.\n\n---\nThread: `"+t.id+"` \u2014 "+t.n+"\nSent from the Planner "+WHERE+", "+t.added+"."});
   put(K.queue,queue); afterWrite("Added.");
   return t;
+}
+/* Notifications on this device. Standard Web Push: the browser gives a
+   subscription, it is saved to data/push.jsonl in the private repository, and
+   the workflows there send the morning message, the Saturday review and every
+   read receipt to it. The key below is the public half, public by design. */
+var VAPID_PUBLIC="BJoOP1dTsBRksud8DfcG0q9Gh8VRfjwhk322ILFJuoNBK0Ey4hLPhQBzXwlGo_p8slDVQTOYYgMh-fqWijMQMiY";
+function pushSupported(){ return ("serviceWorker" in navigator) && ("PushManager" in window) && ("Notification" in window); }
+function pushState(){
+  if(!pushSupported()) return "unsupported";
+  if(Notification.permission==="denied") return "blocked";
+  return get("planner.pushon", false) && Notification.permission==="granted" ? "on" : "off";
+}
+function u8(b64){
+  var s=(b64+"===".slice((b64.length+3)%4)).replace(/-/g,"+").replace(/_/g,"/");
+  var raw=atob(s), out=new Uint8Array(raw.length);
+  for(var i=0;i<raw.length;i++) out[i]=raw.charCodeAt(i);
+  return out;
+}
+function pushId(){
+  var id=get("planner.pushid","");
+  if(!id){ id=WHERE+"-"+Math.random().toString(36).slice(2,10); put("planner.pushid",id); }
+  return id;
+}
+function enablePush(done){
+  if(!pushSupported()){ done(false,"This browser cannot receive notifications. On iPhone, add the app to the Home Screen first and open it from there."); return; }
+  Notification.requestPermission().then(function(p){
+    if(p!=="granted") throw new Error(p==="denied"
+      ? "Notifications are blocked for this app. Allow them in the browser or phone settings, then try again."
+      : "Permission was not given.");
+    return navigator.serviceWorker.register("sw.js").then(function(){ return navigator.serviceWorker.ready; });
+  }).then(function(reg){
+    return reg.pushManager.getSubscription().then(function(s){
+      return s || reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:u8(VAPID_PUBLIC)});
+    });
+  }).then(function(sub){
+    var j=sub.toJSON(), id=pushId();
+    var line={id:id, device:WHERE, endpoint:j.endpoint, keys:j.keys, at:new Date().toISOString(),
+              ua:(navigator.userAgent||"").slice(0,90)};
+    put("planner.pushon", true);
+    queue.push({kind:"push", line:JSON.stringify(line)});
+    queue.push({kind:"issue", title:"Notification test", body:"device: "+id+"\n\nSent from the Planner "+WHERE+" when notifications were turned on."});
+    put(K.queue,queue);
+    afterWrite("Notifications on. A test arrives in about a minute.");
+    done(true,"On. A test notification should arrive in about a minute.");
+  }).catch(function(e){ done(false, e && e.message ? e.message : String(e)); });
+}
+function disablePush(done){
+  var id=pushId();
+  put("planner.pushon", false);
+  queue.push({kind:"push", line:JSON.stringify({id:id, device:WHERE, off:true, at:new Date().toISOString()})});
+  put(K.queue,queue); afterWrite("Notifications off on this device.");
+  if(pushSupported()) navigator.serviceWorker.ready.then(function(r){ return r.pushManager.getSubscription(); })
+    .then(function(s){ if(s) s.unsubscribe(); }).catch(function(){});
+  done(true,"Off on this device.");
+}
+function pushPanel(wrap, btnCls, noteCls){
+  var st=pushState();
+  var msg=el("p",noteCls, {on:"On for this device. The morning message, the Saturday review and every reply arrive here.",
+    off:"Off. Turn it on and this device gets the morning message, the Saturday review and every reply.",
+    blocked:"Blocked in this browser's settings. Allow notifications for this app there, then come back.",
+    unsupported:"This browser cannot receive notifications. On iPhone, add the app to the Home Screen and open it from there."}[st]);
+  var b=el("button",btnCls, st==="on"?"Turn notifications off":"Turn notifications on");
+  if(st==="unsupported"||st==="blocked") b.disabled=true;
+  b.addEventListener("click",function(){
+    b.disabled=true; b.textContent="Working\u2026";
+    (st==="on"?disablePush:enablePush)(function(ok,text){
+      msg.textContent=text; msg.className=noteCls+(ok?" ok":" bad");
+      st=pushState(); b.disabled=false; b.textContent= st==="on"?"Turn notifications off":"Turn notifications on";
+    });
+  });
+  wrap.appendChild(b); wrap.appendChild(msg);
 }
 function localDay(){
   var d=new Date();
@@ -1884,6 +1957,9 @@ function settings(){
     var st=el("p","note", (token&&REPO())?("Connected to "+REPO()+"."):"Not connected.");
     st.id="setst"; sh.appendChild(st);
 
+    var fn=el("div","fld"); fn.appendChild(el("label","tag","Notifications"));
+    pushPanel(fn,"wide ghost","note"); sh.appendChild(fn);
+
     var duo=el("div","duo");
     var save=el("button","wide","Save and test");
     save.addEventListener("click",function(){
@@ -2001,7 +2077,7 @@ if(token){
 
 if("serviceWorker" in navigator){
   window.addEventListener("load",function(){
-    navigator.serviceWorker.register("sw.js?v=11",{updateViaCache:"none"}).then(function(reg){
+    navigator.serviceWorker.register("sw.js",{updateViaCache:"none"}).then(function(reg){
       try{ reg.update(); }catch(e){}
       document.addEventListener("visibilitychange",function(){
         if(document.visibilityState==="visible"){ try{ reg.update(); }catch(e){} }

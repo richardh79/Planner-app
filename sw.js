@@ -1,13 +1,13 @@
 /* Planner service worker.
    Shell is cached so the app opens instantly and works with no signal.
    Data is never cached here; it lives in localStorage, written by app.js. */
-var CACHE = "planner-v21";
+var CACHE = "planner-v22";
 var SHELL = [
   "./",
   "./index.html",
-  "./app.js?v=17",
+  "./app.js?v=18",
   "./desktop.html",
-  "./desktop.js?v=12",
+  "./desktop.js?v=13",
   "./manifest.webmanifest",
   "./desktop.webmanifest",
   "./icon-192.png",
@@ -53,4 +53,29 @@ self.addEventListener("fetch", function(e){
       });
     })
   );
+});
+
+/* Notifications. The workflows in the private repository send them; this only
+   shows them and opens the right screen when one is tapped. */
+self.addEventListener("push", function(e){
+  var d={};
+  try{ d = e.data ? e.data.json() : {}; }catch(err){ d = {title:"Planner", body: e.data ? e.data.text() : ""}; }
+  e.waitUntil(self.registration.showNotification(d.title || "Planner", {
+    body: d.body || "", tag: d.tag || "planner", renotify: true,
+    icon: "icon-192.png", badge: "icon-192.png", data: {url: d.url || "./"}
+  }));
+});
+
+self.addEventListener("notificationclick", function(e){
+  e.notification.close();
+  var url = (e.notification.data && e.notification.data.url) || "./";
+  var base = url.split("#")[0];
+  e.waitUntil(self.clients.matchAll({type:"window", includeUncontrolled:true}).then(function(cs){
+    for (var i=0; i<cs.length; i++) {
+      if (cs[i].url.split("#")[0] === base && "focus" in cs[i]) {
+        return cs[i].focus().then(function(c){ return c && c.navigate ? c.navigate(url) : c; }).catch(function(){});
+      }
+    }
+    return self.clients.openWindow(url);
+  }));
 });
