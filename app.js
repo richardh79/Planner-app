@@ -6,7 +6,7 @@
 var K    = { tok:"planner.token", repo:"planner.repo", board:"planner.board", focus:"planner.focus",
              mins:"planner.mins", queue:"planner.queue", lang:"planner.lang", theme:"planner.theme",
              running:"planner.running" };
-var BUILD = "2026-09-27.3";   // bumped on every publish, checked against version.json
+var BUILD = "2026-10-21.1";   // bumped on every publish, checked against version.json
 function REPO(){ return getRaw(K.repo) || ""; }
 function API(){ return "https://api.github.com/repos/" + REPO(); }
 
@@ -464,6 +464,27 @@ function disablePush(done){
   if(pushSupported()) navigator.serviceWorker.ready.then(function(r){ return r.pushManager.getSubscription(); })
     .then(function(s){ if(s) s.unsubscribe(); }).catch(function(){});
   done(true,"Off on this device.");
+}
+
+/* A repair or a reinstall removes the worker and its push subscription with
+   it, while the on-switch in localStorage stays on. So on every open, if
+   notifications are meant to be on and permission still stands, the
+   subscription is checked and remade when missing, and the new one is saved
+   under the same device id, which replaces the dead one in the repository. */
+function pushRepair(){
+  if(!pushSupported() || !get("planner.pushon",false) || Notification.permission!=="granted") return;
+  navigator.serviceWorker.ready.then(function(reg){
+    return reg.pushManager.getSubscription().then(function(s){
+      if(s) return null;
+      return reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:u8(VAPID_PUBLIC)});
+    });
+  }).then(function(sub){
+    if(!sub) return;
+    var j=sub.toJSON(), id=pushId();
+    queue.push({kind:"push", line:JSON.stringify({id:id, device:WHERE, endpoint:j.endpoint, keys:j.keys,
+      at:new Date().toISOString(), ua:(navigator.userAgent||"").slice(0,90), repaired:true})});
+    put(K.queue,queue); afterWrite("Notifications repaired on this device.");
+  }).catch(function(){});
 }
 function pushPanel(wrap, btnCls, noteCls){
   var st=pushState();
@@ -1047,10 +1068,15 @@ function endsWithWords(a,b){
   return true;
 }
 function joinResults(results){
-  var segs=[];
+  /* Final results are kept; of the interim ones only the newest counts, because
+     each interim restates the phrase being spoken. Android sometimes sends a
+     final that restates the previous final, so finals are still compared word
+     by word. */
+  var segs=[], interim="";
   for(var i=0;i<results.length;i++){
     var t=((results[i][0]&&results[i][0].transcript)||"").replace(/\s+/g," ").trim();
     if(!t) continue;
+    if(!results[i].isFinal){ interim=t; continue; }
     var w=dictWords(t);
     if(!w.length) continue;
     var all=[]; segs.forEach(function(s){ all=all.concat(s.w); });
@@ -1060,33 +1086,58 @@ function joinResults(results){
     if(last && endsWithWords(all,w)) continue;
     segs.push({t:t,w:w});
   }
-  return segs.map(function(s){ return s.t; }).join(" ");
+  var out=segs.map(function(s){ return s.t; }).join(" ");
+  if(interim){
+    var iw=dictWords(interim), lw=segs.length?segs[segs.length-1].w:[];
+    if(!(lw.length && restates(lw,iw))) out=(out?out+" ":"")+interim;
+  }
+  return out;
 }
+var recWant=false, recRestarts=0, recLastResult=0;
+/* The browser ends a session on its own: after a few seconds of silence on
+   Android, after about a minute on iPhone, on a network hiccup, when the
+   screen dims. None of those is him tapping stop. So the session is restarted
+   until he does tap stop, and what was heard so far is folded into the base
+   text first, so nothing is lost and nothing repeats. */
 function recStart(target){
   if(!SR) return;
-  var box=$(target); recBase = box?box.value:sayText;
-  var r; try{ r=new SR(); }catch(e){ recHint="Could not start: "+e.message; render(); return; }
+  recWant=true; recRestarts=0;
+  recRun(target);
+}
+function recRun(target){
+  var box=$(target); recBase = (box?box.value:sayText).replace(/\s+$/,"");
+  var r; try{ r=new SR(); }catch(e){ recWant=false; recHint="Could not start: "+e.message; render(); return; }
   r.lang=LANGS[langIx][0]; r.continuous=true; r.interimResults=true;
   r.onresult=function(ev){
-    var all="";
-    all = joinResults(ev.results);
+    recLastResult=Date.now(); recRestarts=0;
+    var all = joinResults(ev.results);
     var out=(recBase?recBase+" ":"")+all;
     sayText=out;
     var b=$(target); if(b) b.value=out;
   };
   r.onerror=function(ev){
-    var c=(ev&&ev.error)||"unknown"; live=false; rec=null;
-    recHint = (c==="not-allowed"||c==="service-not-allowed")
-      ? "Microphone blocked. Use the keyboard's microphone key instead."
-      : "Dictation stopped: "+c+". The keyboard's microphone key still works.";
-    render();
+    var c=(ev&&ev.error)||"unknown";
+    if(c==="not-allowed"||c==="service-not-allowed"){
+      recWant=false; live=false; rec=null;
+      recHint="Microphone blocked. Use the keyboard's microphone key instead."; render(); return;
+    }
+    if(c==="no-speech"||c==="aborted"||c==="network"||c==="audio-capture") return; /* onend follows and restarts */
+    recWant=false; live=false; rec=null;
+    recHint="Dictation stopped: "+c+". The keyboard's microphone key still works."; render();
   };
-  r.onend=function(){ live=false; rec=null; recHint="Stopped."; render(); };
-  try{ r.start(); rec=r; live=true; recHint="Listening. Speak, then tap to stop."; }
-  catch(e){ recHint="Could not start: "+e.message; }
-  render();
+  r.onend=function(){
+    rec=null;
+    if(!recWant){ live=false; recHint="Stopped."; render(); return; }
+    recRestarts++;
+    if(recRestarts>8 && Date.now()-recLastResult>60000){
+      recWant=false; live=false; recHint="Stopped: nothing heard for a minute. Tap to start again."; render(); return;
+    }
+    setTimeout(function(){ if(recWant && !rec) recRun(target); }, 250);
+  };
+  try{ r.start(); rec=r; live=true; if(recRestarts===0){ recHint="Listening. Speak, then tap to stop."; render(); } }
+  catch(e){ recWant=false; live=false; recHint="Could not start: "+e.message; render(); }
 }
-function recStop(){ if(rec){ try{ rec.stop(); }catch(e){} } live=false; rec=null; }
+function recStop(){ recWant=false; if(rec){ try{ rec.stop(); }catch(e){} } live=false; rec=null; }
 
 /* ---------- views ---------- */
 function band(cls, accent, tag){
@@ -2478,6 +2529,7 @@ if("serviceWorker" in navigator){
   window.addEventListener("load",function(){
     navigator.serviceWorker.register("sw.js",{updateViaCache:"none"}).then(function(reg){
       try{ reg.update(); }catch(e){}
+      pushRepair();
       document.addEventListener("visibilitychange",function(){
         if(document.visibilityState==="visible"){ try{ reg.update(); }catch(e){} }
       });

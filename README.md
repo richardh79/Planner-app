@@ -155,10 +155,14 @@ in as a decision.
 
 ## Dictation
 
-Both pages carry a microphone on every box that sends something: the compose
-box, the answer box and the add-a-line box. It uses the browser's own speech
-recognition, Arabic and English with one tap between them, and it never
-repaints the page while it is listening. Where the browser has no speech
+Both pages carry a microphone on every box that sends something. It uses the
+browser's own speech recognition, Arabic and English with one tap between
+them, and it never repaints the page while it is listening. The browser ends
+a session on its own after a few seconds of silence, after about a minute on
+iPhone, or on a network hiccup; the app restarts it until the stop button is
+tapped, folding what was heard into the box first, and gives up only after a
+minute with nothing heard. Final phrases are kept and only the newest interim
+phrase is shown, which is what stops a sentence repeating itself. Where the browser has no speech
 recognition the button says so and points at the keyboard's own microphone key.
 
 ## Keeping a phone current
@@ -177,8 +181,16 @@ ever asks whether anything moved. Three things close it.
   repaired.
 
 Settings in both apps shows the running build and carries a **Force update**
-button. **Bump `version.json` on every publish**, alongside the `?v=` query on
-the scripts and the service worker cache name.
+button. **Bump `version.json` on every publish**, together with the `BUILD`
+constant at the top of `app.js` and of `desktop.js`, the `?v=` query on the
+scripts and the service worker cache name. If `version.json` moves and the
+`BUILD` constants do not, every open wipes the install and reloads, twice,
+and the push subscriptions die with the worker. That happened on 27 September
+and was found on 21 October.
+
+The apps also check their push subscription on every open. If notifications
+were on and the subscription is gone, they make a new one without asking and
+save it to the repository, so a repaired install keeps its notifications.
 
 ## What it expects in your repository
 
@@ -238,10 +250,11 @@ system setting.
 Check syntax before pushing: `node --check app.js && node --check sw.js`.
 A missing bracket ships a blank screen.
 
-**Bump the version on every change to `app.js` or `index.html`.** There are
-three places and all three must move together: the `?v=` on the script tag in
-`index.html`, the same `?v=` in the `SHELL` list and the `CACHE` name in
-`sw.js`, and the `?v=` on the `register()` call in `app.js`.
+**Bump the version on every change to `app.js`, `desktop.js`, `index.html`
+or `desktop.html`.** Six places, all together: `build` in `version.json`,
+`BUILD` in `app.js` and `desktop.js`, the `?v=` on the script tags in
+`index.html` and `desktop.html`, the same `?v=` entries in the `SHELL` list
+and the `CACHE` name in `sw.js`.
 
 This is not tidiness. Pages serves assets with browser caching, so a new
 `index.html` will happily run an old `app.js`, and a nav button added in one

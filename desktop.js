@@ -11,7 +11,7 @@
 (function(){
 "use strict";
 
-var BUILD = "2026-09-27.3";   // bumped on every publish, checked against version.json
+var BUILD = "2026-10-21.1";   // bumped on every publish, checked against version.json
 var K = { tok:"planner.token", repo:"planner.repo", board:"planner.board",
           mins:"planner.mins", queue:"planner.queue", theme:"planner.theme",
           running:"planner.running", sel:"planner.sel", lang:"planner.lang" };
@@ -128,10 +128,15 @@ function endsWithWords(a,b){
   return true;
 }
 function joinResults(results){
-  var segs=[];
+  /* Final results are kept; of the interim ones only the newest counts, because
+     each interim restates the phrase being spoken. Android sometimes sends a
+     final that restates the previous final, so finals are still compared word
+     by word. */
+  var segs=[], interim="";
   for(var i=0;i<results.length;i++){
     var t=((results[i][0]&&results[i][0].transcript)||"").replace(/\s+/g," ").trim();
     if(!t) continue;
+    if(!results[i].isFinal){ interim=t; continue; }
     var w=dictWords(t);
     if(!w.length) continue;
     var all=[]; segs.forEach(function(s){ all=all.concat(s.w); });
@@ -141,7 +146,12 @@ function joinResults(results){
     if(last && endsWithWords(all,w)) continue;
     segs.push({t:t,w:w});
   }
-  return segs.map(function(s){ return s.t; }).join(" ");
+  var out=segs.map(function(s){ return s.t; }).join(" ");
+  if(interim){
+    var iw=dictWords(interim), lw=segs.length?segs[segs.length-1].w:[];
+    if(!(lw.length && restates(lw,iw))) out=(out?out+" ":"")+interim;
+  }
+  return out;
 }
 function micRow(ta){
   var row=el("div","microw");
@@ -158,27 +168,42 @@ function micRow(ta){
       : "This browser has no dictation. Use the keyboard's own microphone key.");
     lang.textContent = LANGS[langIx][1];
   }
-  function stop(){ if(rec){ try{ rec.stop(); }catch(e){} } rec=null; recLive=false; paint(); }
+  var want=false, restarts=0, lastResult=0, base="";
+  function stop(){ want=false; if(rec){ try{ rec.stop(); }catch(e){} } rec=null; recLive=false; paint(); }
   function start(){
     if(!SR) return;
-    var base = ta.value ? ta.value.replace(/\s+$/,"")+" " : "";
-    var r; try{ r=new SR(); }catch(e){ paint("Could not start: "+e.message); return; }
+    want=true; restarts=0; run();
+  }
+  /* The browser ends a session on its own after silence or a network hiccup.
+     That is not him tapping stop, so it is restarted until he does, with what
+     was heard so far folded into the base text first. */
+  function run(){
+    base = ta.value ? ta.value.replace(/\s+$/,"")+" " : "";
+    var r; try{ r=new SR(); }catch(e){ want=false; paint("Could not start: "+e.message); return; }
     r.lang=LANGS[langIx][0]; r.continuous=true; r.interimResults=true;
     r.onresult=function(ev){
-      var all="";
-      all = joinResults(ev.results);
-      ta.value = base + all;
+      lastResult=Date.now(); restarts=0;
+      ta.value = base + joinResults(ev.results);
     };
     r.onerror=function(ev){
       var c=(ev&&ev.error)||"unknown";
-      rec=null; recLive=false;
-      paint(c==="not-allowed"||c==="service-not-allowed"
-        ? "Microphone blocked for this page. Allow it in the address bar, or use the keyboard's microphone key."
-        : "Dictation stopped: "+c+". The keyboard's microphone key still works.");
+      if(c==="not-allowed"||c==="service-not-allowed"){
+        want=false; rec=null; recLive=false;
+        paint("Microphone blocked for this page. Allow it in the address bar, or use the keyboard's microphone key."); return;
+      }
+      if(c==="no-speech"||c==="aborted"||c==="network"||c==="audio-capture") return;
+      want=false; rec=null; recLive=false;
+      paint("Dictation stopped: "+c+". The keyboard's microphone key still works.");
     };
-    r.onend=function(){ rec=null; recLive=false; paint("Stopped. Tap to add more."); };
-    try{ r.start(); rec=r; recLive=true; paint(); }
-    catch(e){ paint("Could not start: "+e.message); }
+    r.onend=function(){
+      rec=null;
+      if(!want){ recLive=false; paint("Stopped. Tap to add more."); return; }
+      restarts++;
+      if(restarts>8 && Date.now()-lastResult>60000){ want=false; recLive=false; paint("Stopped: nothing heard for a minute. Tap to start again."); return; }
+      setTimeout(function(){ if(want && !rec) run(); }, 250);
+    };
+    try{ r.start(); rec=r; recLive=true; if(restarts===0) paint(); }
+    catch(e){ want=false; recLive=false; paint("Could not start: "+e.message); }
   }
   btn.addEventListener("click",function(){ recLive?stop():start(); });
   if(!SR){ btn.disabled=true; btn.style.opacity=".45"; }
@@ -642,6 +667,27 @@ function disablePush(done){
   if(pushSupported()) navigator.serviceWorker.ready.then(function(r){ return r.pushManager.getSubscription(); })
     .then(function(s){ if(s) s.unsubscribe(); }).catch(function(){});
   done(true,"Off on this device.");
+}
+
+/* A repair or a reinstall removes the worker and its push subscription with
+   it, while the on-switch in localStorage stays on. So on every open, if
+   notifications are meant to be on and permission still stands, the
+   subscription is checked and remade when missing, and the new one is saved
+   under the same device id, which replaces the dead one in the repository. */
+function pushRepair(){
+  if(!pushSupported() || !get("planner.pushon",false) || Notification.permission!=="granted") return;
+  navigator.serviceWorker.ready.then(function(reg){
+    return reg.pushManager.getSubscription().then(function(s){
+      if(s) return null;
+      return reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:u8(VAPID_PUBLIC)});
+    });
+  }).then(function(sub){
+    if(!sub) return;
+    var j=sub.toJSON(), id=pushId();
+    queue.push({kind:"push", line:JSON.stringify({id:id, device:WHERE, endpoint:j.endpoint, keys:j.keys,
+      at:new Date().toISOString(), ua:(navigator.userAgent||"").slice(0,90), repaired:true})});
+    put(K.queue,queue); afterWrite("Notifications repaired on this device.");
+  }).catch(function(){});
 }
 function pushPanel(wrap, btnCls, noteCls){
   var st=pushState();
@@ -2826,6 +2872,6 @@ setInterval(function(){ if(token&&REPO()&&!busy&&!file) sync(); }, 300000);
 window.addEventListener("focus",function(){ if(token&&REPO()&&!busy&&!file&&Date.now()-lastSync>60000) sync(); });
 
 if("serviceWorker" in navigator){
-  window.addEventListener("load",function(){ navigator.serviceWorker.register("sw.js").catch(function(){}); });
+  window.addEventListener("load",function(){ navigator.serviceWorker.register("sw.js").then(pushRepair).catch(function(){}); });
 }
 })();
