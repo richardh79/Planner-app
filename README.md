@@ -13,8 +13,8 @@ This repository holds the code only. It contains no data of any kind.
   how long is left, and what comes next.
 - **Work.** Each piece with its stage and progress. One tap starts tracking,
   another stops it, and the session is appended to a log file in your
-  repository. **Several threads can run at once**, because real days are not
-  single-threaded; each keeps its own clock and logs its own session.
+  repository. **One timer runs at a time**: starting one stops the others, and
+  a timer left running past twelve hours asks for the real minutes.
 - **Say.** Speak or type an update, tag it to a thread, and it becomes an issue.
 - **Inbox.** Open issues with their replies, and a button to close one.
 
@@ -247,8 +247,10 @@ Minimum touch target is 44px, base type is 17px, and both themes are real: the
 palette is defined for light and dark and a toggle in the header overrides the
 system setting.
 
-Check syntax before pushing: `node --check app.js && node --check sw.js`.
-A missing bracket ships a blank screen.
+Check before pushing: `node --check app.js && node --check desktop.js && node --check sw.js`,
+then the four scripts in `tests/` (see `tests/README.md`).
+A missing bracket ships a blank screen, and the build mismatch of 27 September
+was only found three weeks later because nothing ran the page.
 
 **Bump the version on every change to `app.js`, `desktop.js`, `index.html`
 or `desktop.html`.** Six places, all together: `build` in `version.json`,

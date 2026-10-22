@@ -11,7 +11,7 @@
 (function(){
 "use strict";
 
-var BUILD = "2026-10-21.1";   // bumped on every publish, checked against version.json
+var BUILD = "2026-10-22.1";   // bumped on every publish, checked against version.json
 var K = { tok:"planner.token", repo:"planner.repo", board:"planner.board",
           mins:"planner.mins", queue:"planner.queue", theme:"planner.theme",
           running:"planner.running", sel:"planner.sel", lang:"planner.lang" };
@@ -128,30 +128,30 @@ function endsWithWords(a,b){
   return true;
 }
 function joinResults(results){
-  /* Final results are kept; of the interim ones only the newest counts, because
-     each interim restates the phrase being spoken. Android sometimes sends a
-     final that restates the previous final, so finals are still compared word
-     by word. */
+  /* Final results are merged phrase by phrase. Of the interim results only the
+     newest counts, because each interim restates the phrase being spoken; the
+     older ones are stale. The newest interim is then merged exactly like a
+     final: if it restates the last phrase it replaces it (that is how Android
+     extends a sentence), otherwise it follows it. */
   var segs=[], interim="";
+  function add(t){
+    var w=dictWords(t);
+    if(!w.length) return;
+    var all=[]; segs.forEach(function(s){ all=all.concat(s.w); });
+    if(segs.length>1 && restates(all,w)){ segs=[{t:t,w:w}]; return; }
+    var last=segs[segs.length-1];
+    if(last && restates(last.w,w)){ segs[segs.length-1]={t:t,w:w}; return; }
+    if(last && endsWithWords(all,w)) return;
+    segs.push({t:t,w:w});
+  }
   for(var i=0;i<results.length;i++){
     var t=((results[i][0]&&results[i][0].transcript)||"").replace(/\s+/g," ").trim();
     if(!t) continue;
-    if(!results[i].isFinal){ interim=t; continue; }
-    var w=dictWords(t);
-    if(!w.length) continue;
-    var all=[]; segs.forEach(function(s){ all=all.concat(s.w); });
-    if(segs.length>1 && restates(all,w)){ segs=[{t:t,w:w}]; continue; }
-    var last=segs[segs.length-1];
-    if(last && restates(last.w,w)){ segs[segs.length-1]={t:t,w:w}; continue; }
-    if(last && endsWithWords(all,w)) continue;
-    segs.push({t:t,w:w});
+    if(results[i].isFinal===false){ interim=t; continue; }
+    add(t);
   }
-  var out=segs.map(function(s){ return s.t; }).join(" ");
-  if(interim){
-    var iw=dictWords(interim), lw=segs.length?segs[segs.length-1].w:[];
-    if(!(lw.length && restates(lw,iw))) out=(out?out+" ":"")+interim;
-  }
-  return out;
+  if(interim) add(interim);
+  return segs.map(function(s){ return s.t; }).join(" ");
 }
 function micRow(ta){
   var row=el("div","microw");
@@ -291,7 +291,7 @@ function gh(path, opts){
           if(r.status===401) m="Token rejected. Make a new one and paste it again.";
           if(r.status===403) m="Token lacks permission. It needs Contents and Issues, read and write.";
           if(r.status===409) m="That file changed underneath you. Reopen it and redo the edit.";
-          throw new Error(m);
+          var er=new Error(m); er.status=r.status; throw er;
         }
         return j;
       });
@@ -311,6 +311,12 @@ function putFile(path, text, sha, message){
 }
 function appendLine(path, line, message){
   return gh("/contents/"+path, {soft404:true}).then(function(r){
+    if(r && r.sha && !r.content && r.size>0){
+      /* The contents API returns nothing for a file over 1 MB. Appending to that
+         "empty" body would replace the whole file with one line. */
+      var big=new Error(path+" is over 1 MB and cannot be extended from here. Trim it in the repository.");
+      big.status=413; throw big;
+    }
     var body = r&&r.content ? b64d(r.content) : "";
     if(body && body.slice(-1)!=="\n") body += "\n";
     return putFile(path, body+line+"\n", r&&r.sha, message);
@@ -361,19 +367,27 @@ function pullPlan(){
       if(!ln.trim()) return;
       var o=null; try{ o=JSON.parse(ln); }catch(e){ return; }
       if(!o||!o.date||typeof o.block!=="number") return;
-      plan[o.date+"#"+o.block]=o.thread||"";
+      plan[o.date+"#"+(o.key||blockId(o.date,o.block))]=o.thread||"";
     });
   });
 }
 function assign(dateStr, blockIx, threadId){
-  plan[dateStr+"#"+blockIx]=threadId;
-  queue.push({kind:"plan", line:JSON.stringify({date:dateStr, block:blockIx, thread:threadId,
+  plan[dateStr+"#"+blockId(dateStr,blockIx)]=threadId;
+  queue.push({kind:"plan", line:JSON.stringify({date:dateStr, block:blockIx, key:blockId(dateStr,blockIx), thread:threadId,
     at:new Date().toISOString()})});
   put(K.queue,queue); note("Saving the plan…"); render();
   flushQueue().then(function(){ stateMsg="Plan saved."; render(); })
     .catch(function(e){ note(e.message,"bad"); });
 }
-function planned(dateStr, blockIx){ return plan[dateStr+"#"+blockIx]||""; }
+/* A day's blocks are a list that timetable edits reorder, so a block's position
+   is not a safe name for it: adding or cancelling one moved every assignment
+   after it onto a different block. Assignments are filed under the block's
+   start and title; the position stays in the line for anything that reads it. */
+function blockId(dateStr, ix){
+  var d=new Date(dateStr+"T12:00:00"), day=(board.week[d.getDay()]||[]), b=day[ix];
+  return b ? (b[4]+"|"+b[1]) : ("ix"+ix);
+}
+function planned(dateStr, blockIx){ return plan[dateStr+"#"+blockId(dateStr,blockIx)]||""; }
 
 function pullDates(){
   return gh("/contents/data/dates.jsonl", {soft404:true}).then(function(r){
@@ -445,8 +459,21 @@ function flushOnce(){
   return p.then(function(){
     queue.shift(); put(K.queue,queue);
     return queue.length ? flushOnce() : null;
-  }).catch(function(){ /* stays queued */ });
+  }).catch(function(e){
+    if(e && (e.status===422 || e.status===413)){
+      /* This write can never succeed. Left at the head it would hold back everything
+         behind it, so it is set aside in this browser and the queue carries on. */
+      var dead=get("planner.dead",[]);
+      dead.push({item:item, error:String(e.message).slice(0,200), at:new Date().toISOString()});
+      put("planner.dead",dead.slice(-50));
+      queue.shift(); put(K.queue,queue);
+      deadNote="One write could not be saved ("+String(e.message).slice(0,70)+") and was set aside.";
+      return queue.length ? flushOnce() : null;
+    }
+    /* anything else (no signal, a conflict, a bad token) stays queued and is retried */
+  });
 }
+var deadNote="";
 /* One save at a time. Two overlapping flushes both took the first item in the
    queue and wrote it twice; now a flush asked for while one runs waits for it
    and then carries on with whatever is left. */
@@ -480,7 +507,7 @@ function sync(){
 var WHERE="desktop";
 function afterWrite(msg){
   note("Saving…"); render();
-  flushQueue().then(loadIssues).then(function(){ stateMsg = queue.length ? "Queued, no signal." : msg; mine=null; render(); })
+  flushQueue().then(loadIssues).then(function(){ stateMsg = deadNote || (queue.length ? "Queued, no signal." : msg); deadNote=""; mine=null; render(); })
     .catch(function(e){ note(e.message,"bad"); });
 }
 
@@ -1077,7 +1104,7 @@ function nextWorkDay(){
 /* A review decision executes itself: a day, a delay or a drop is a line in
    data/dates.jsonl. The summary goes to Claude as one issue when the review ends. */
 var reviewLog=[];
-function reviewDecide(t, what){
+function applyDecision(t, what){
   var iso = what==="start" ? dayOffset(0) : what==="day" ? nextWorkDay() : what==="delay" ? dayOffset(28) : null;
   if(what==="drop"){
     dropped[t.id]=true; delete dates[t.id];
@@ -1086,9 +1113,20 @@ function reviewDecide(t, what){
     dates[t.id]=iso;
     queue.push({kind:"date", line:JSON.stringify({thread:t.id, "do":iso, why:what, at:new Date().toISOString()})});
   }
-  reviewLog.push({t:t, what:what, iso:iso});
-  put(K.queue,queue); flushQueue();
+  return iso;
 }
+function reviewDecide(t, what){
+  var iso=applyDecision(t, what);
+  reviewLog.push({t:t, what:what, iso:iso});
+  put(K.queue,queue); flushQueue(); armReviewSend();
+}
+/* The review's summary used to go only when the Send button was pressed, so
+   leaving the page lost it. It now goes after ninety quiet seconds, and when
+   the page is hidden or closed (it is queued, and the queue survives a close). */
+var reviewTimer=null;
+function armReviewSend(){ clearTimeout(reviewTimer); reviewTimer=setTimeout(reviewFinish, 90000); }
+document.addEventListener("visibilitychange",function(){ if(document.visibilityState==="hidden") reviewFinish(); });
+window.addEventListener("pagehide", function(){ reviewFinish(); });
 function reviewFinish(){
   if(!reviewLog.length) return;
   var words={start:"Start it today", day:"Give it a day", delay:"Delay four weeks", drop:"Drop it"};
@@ -1110,7 +1148,14 @@ function firstLine(s){
   var t=ls[0]||"";
   return t.length>160 ? t.slice(0,160)+"…" : t;
 }
-function msgState(x){ return x.state==="closed" ? "filed" : (x.comments>0 ? "seen" : "sent"); }
+/* The organizer and the read receipts are bots. Their comments say a machine has
+   looked, not that he has an answer, so only a reply from a person's account
+   (which is where Claude's replies are posted) turns the ticks blue. */
+function msgState(x){
+  if(x.state==="closed") return "filed";
+  var r=replies[x.number];
+  return (x.comments>0 && r && r.answered) ? "seen" : "sent";
+}
 function loadMine(force){
   if(!token) return Promise.resolve();
   if(!force && mine && Date.now()-mineAt<60000) return Promise.resolve();
@@ -1123,7 +1168,7 @@ function loadMine(force){
         cs=cs||[];
         var mine2=cs.filter(function(c){ return !(c.user && c.user.type==="Bot") && !/^@\S+ \u2713\u2713 Read\./.test(c.body||""); });
         var last=mine2[mine2.length-1]||cs[cs.length-1];
-        replies[x.number]={u:x.updated_at, text:firstLine(last&&last.body)};
+        replies[x.number]={u:x.updated_at, text:firstLine(last&&last.body), answered:mine2.length>0};
       }).catch(function(){});
     }));
   }).catch(function(){});
@@ -1691,6 +1736,7 @@ function decide(d, t){
     var b=el("button","btn"+(label==="Start it"?" pri":""), label);
     b.addEventListener("click",function(){
       var v=ta.value.trim();
+      applyDecision(t, label==="Start it" ? "start" : label==="Delay it" ? "delay" : "drop");
       var body=label+". "+(v||"No reason given.")+
         "\n\n---\nThread: `"+t.id+"` \u2014 "+t.n+
         "\nSent from the weekly review, "+new Date().toISOString()+".";
