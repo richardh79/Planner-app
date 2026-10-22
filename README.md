@@ -13,8 +13,8 @@ This repository holds the code only. It contains no data of any kind.
   how long is left, and what comes next.
 - **Work.** Each piece with its stage and progress. One tap starts tracking,
   another stops it, and the session is appended to a log file in your
-  repository. **Several threads can run at once**, because real days are not
-  single-threaded; each keeps its own clock and logs its own session.
+  repository. **One timer runs at a time**: starting one stops the others, and
+  a timer left running past twelve hours asks for the real minutes.
 - **Say.** Speak or type an update, tag it to a thread, and it becomes an issue.
 - **Inbox.** Open issues with their replies, and a button to close one.
 
@@ -155,10 +155,14 @@ in as a decision.
 
 ## Dictation
 
-Both pages carry a microphone on every box that sends something: the compose
-box, the answer box and the add-a-line box. It uses the browser's own speech
-recognition, Arabic and English with one tap between them, and it never
-repaints the page while it is listening. Where the browser has no speech
+Both pages carry a microphone on every box that sends something. It uses the
+browser's own speech recognition, Arabic and English with one tap between
+them, and it never repaints the page while it is listening. The browser ends
+a session on its own after a few seconds of silence, after about a minute on
+iPhone, or on a network hiccup; the app restarts it until the stop button is
+tapped, folding what was heard into the box first, and gives up only after a
+minute with nothing heard. Final phrases are kept and only the newest interim
+phrase is shown, which is what stops a sentence repeating itself. Where the browser has no speech
 recognition the button says so and points at the keyboard's own microphone key.
 
 ## Keeping a phone current
@@ -177,8 +181,16 @@ ever asks whether anything moved. Three things close it.
   repaired.
 
 Settings in both apps shows the running build and carries a **Force update**
-button. **Bump `version.json` on every publish**, alongside the `?v=` query on
-the scripts and the service worker cache name.
+button. **Bump `version.json` on every publish**, together with the `BUILD`
+constant in `core.js`, the `?v=` on the script tags and in the service
+worker's list, and the service worker cache name. If `version.json` moves and
+`BUILD` does not, every open wipes the install and reloads, twice, and the push
+subscriptions die with the worker. That happened on 27 September and was found
+on 21 October.
+
+The apps also check their push subscription on every open. If notifications
+were on and the subscription is gone, they make a new one without asking and
+save it to the repository, so a repaired install keeps its notifications.
 
 ## What it expects in your repository
 
@@ -217,10 +229,18 @@ same board read as a walk rather than a table.
 
 ## Files
 
-`index.html` shell and styling, `app.js` everything else, `sw.js` the service
-worker, `manifest.webmanifest` what makes it installable. `desktop.html`,
-`desktop.js` and `desktop.webmanifest` are the wide view and install the same
-way.
+`index.html` is the phone page and `desktop.html` the desktop page; each carries
+its own styling. `core.js` is the code both pages share: reading and writing the
+repository, the offline queue (`WRITES` lists every kind of write), the chase and
+day rules, the dictation merge and notifications. `app.js` is the rest of the
+phone page and `desktop.js` the rest of the desktop page. `sw.js` is the service
+worker, the two `.webmanifest` files make each page installable, `update.html`
+repairs a stale install, and `tests/` holds the checks.
+
+Before this existed the two pages carried a second copy of the shared code, and
+every fix had to be made twice and sometimes was not. A page may use anything in
+`core.js` directly. The one thing `core.js` needs from a page is `afterWrite` and
+`setStage`, which each page registers on `UI` at the top of its script.
 
 **One building block: the band.** Every card, row and block is a `.band` whose
 accent comes from a single `--a` custom property, and its background is mixed
@@ -235,13 +255,16 @@ Minimum touch target is 44px, base type is 17px, and both themes are real: the
 palette is defined for light and dark and a toggle in the header overrides the
 system setting.
 
-Check syntax before pushing: `node --check app.js && node --check sw.js`.
-A missing bracket ships a blank screen.
+Check before pushing: `node --check core.js app.js desktop.js sw.js`, then the
+scripts in `tests/` (see `tests/README.md`).
+A missing bracket ships a blank screen, and the build mismatch of 27 September
+was only found three weeks later because nothing ran the page.
 
-**Bump the version on every change to `app.js` or `index.html`.** There are
-three places and all three must move together: the `?v=` on the script tag in
-`index.html`, the same `?v=` in the `SHELL` list and the `CACHE` name in
-`sw.js`, and the `?v=` on the `register()` call in `app.js`.
+**Bump the version on every change to `core.js`, `app.js`, `desktop.js`,
+`index.html` or `desktop.html`.** Five places, all together: `build` in
+`version.json`, `BUILD` in `core.js`, the `?v=` on the script tags in both
+HTML files, the same `?v=` entries in the `SHELL` list in `sw.js`, and the
+`CACHE` name there.
 
 This is not tidiness. Pages serves assets with browser caching, so a new
 `index.html` will happily run an old `app.js`, and a nav button added in one
