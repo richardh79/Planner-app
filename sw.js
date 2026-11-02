@@ -5,10 +5,10 @@ var CACHE = "planner-v29";
 var SHELL = [
   "./",
   "./index.html",
-  "./orbit.css?v=3",
+  "./orbit.css?v=4",
   "./orbit.js?v=2",
   "./core.js?v=2",
-  "./app.js?v=25",
+  "./app.js?v=26",
   "./desktop.html",
   "./desktop.js?v=20",
   "./manifest.webmanifest",

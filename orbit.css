@@ -119,3 +119,30 @@
 
 @media (max-width:380px){ .orb-top{flex-direction:column;align-items:stretch} .orb-rings{align-self:center} }
 @media (prefers-reduced-motion:reduce){ .orb-arc,.orb-arc.near,.orb-toast,.orb-card,.orb-card.burst,.orb-card.burst::after{animation:none!important} }
+
+/* ---- Now, behind tabs, and tighter on a phone ---- */
+.ntabs{display:flex;gap:6px;margin:14px 0 2px}
+.ntab{flex:1;min-width:0;min-height:44px;display:flex;align-items:center;justify-content:center;gap:6px;border-radius:22px;
+  font-size:.86rem;font-weight:700;letter-spacing:.01em;color:var(--dim);background:none;border:1px solid transparent;text-align:center}
+.ntab.on{color:var(--ink);background:var(--raise);border-color:var(--hair)}
+.ntab .nb{font-style:normal;font-size:.7rem;font-weight:800;min-width:20px;height:20px;padding:0 6px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;
+  background:rgba(255,255,255,.1);color:var(--ink2)}
+.ntab .nb.warn{background:rgba(169,155,255,.25);color:var(--o-person,#A99BFF)}
+.npane{display:none}.npane.on{display:block}
+@media (max-width:520px){
+  .orbit{margin:0 0 4px}
+  .orb-rings{width:96px;height:96px}
+  .orb-n{font-size:34px}
+  .orb-tile{padding:6px 10px;border-radius:12px}
+  .orb-tile b{font-size:1.1rem}
+  .orb-side{gap:6px}
+  .orb-meta{margin:8px 2px 0;font-size:.74rem}
+  .orb-card{margin-top:8px;padding:14px 14px 12px;border-radius:18px}
+  .orb-title{font-size:1.3rem}
+  .orb-why{font-size:.86rem}
+  .orb-act{margin-top:8px}
+  .orb-go,.orb-alt{min-height:44px}
+  .orb-next{margin-top:8px}
+  .orb-add{margin-top:8px}
+  .orb-add input,.orb-add button{min-height:42px}
+}

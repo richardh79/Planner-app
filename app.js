@@ -281,6 +281,28 @@ function orbitCtx(){ return { board:board, threads:function(){ return board.thre
 function vNow(m){
   var cur=curBlock(), nx=nextBlock(), t=nowMin();
   if(window.Orbit && board.threads.length) m.appendChild(window.Orbit.build(orbitCtx()));
+
+  /* The page was one long scroll. Now the top is the one-look card and the rest sits behind
+     four tabs, so nothing is more than a tap away and nothing needs a scroll to find. */
+  var host=m, P={}, tab0=getRaw("planner.ntab")||"today";
+  var TABS=[["today","Today",openTodos().length],["chase","Chase",board.threads.filter(needsChase).length],["week","Week",0],["more","More",qLeft().length]];
+  if(!P[tab0] && TABS.every(function(x){ return x[0]!==tab0; })) tab0="today";
+  var bar=el("div","ntabs"); bar.setAttribute("role","tablist");
+  TABS.forEach(function(x){
+    P[x[0]]=el("div","npane"+(x[0]===tab0?" on":""));
+    var b=el("button","ntab"+(x[0]===tab0?" on":"")); b.setAttribute("role","tab"); b.dataset.n=x[0];
+    b.appendChild(el("span",null,x[1]));
+    if(x[2]) b.appendChild(el("i","nb"+(x[0]==="chase"?" warn":""),String(x[2])));
+    b.addEventListener("click",function(){
+      putRaw("planner.ntab",x[0]);
+      Array.prototype.forEach.call(bar.children,function(c){ c.classList.toggle("on",c.dataset.n===x[0]); });
+      TABS.forEach(function(y){ P[y[0]].classList.toggle("on",y[0]===x[0]); });
+    });
+    bar.appendChild(b);
+  });
+  host.appendChild(bar);
+  TABS.forEach(function(x){ host.appendChild(P[x[0]]); });
+  m=P.today;
   var acc, title, sub, lv, lc;
   if(cur){
     acc=cur.b[3]; title=cur.b[1]; sub=cur.b[2];
@@ -359,6 +381,7 @@ function vNow(m){
     m.appendChild(st);
   }
 
+  m=P.chase;
   var chase=board.threads.filter(needsChase);
   if(chase.length){
     var sc=el("div","sec");
@@ -367,6 +390,7 @@ function vNow(m){
     m.appendChild(sc);
   }
 
+  m=P.today;
   var buckets={overdue:[],today:[],week:[]};
   board.threads.forEach(function(t){ var bk=bucketOf(t); if(buckets[bk]) buckets[bk].push(t); });
   [["overdue","Late"],["today","On today"],["week","This week"]].forEach(function(pair){
@@ -385,6 +409,7 @@ function vNow(m){
     se0.appendChild(e0); m.appendChild(se0);
   }
 
+  m=P.more;
   if(board.headline){
     var s1=el("div","sec");
     s1.appendChild(sech("The one line"));
@@ -393,6 +418,7 @@ function vNow(m){
     s1.appendChild(q); m.appendChild(s1);
   }
 
+  m=P.week;
   var anyWeek=false;
   for(var wi=0;wi<board.week.length;wi++) if((board.week[wi]||[]).length) anyWeek=true;
   if(anyWeek){
@@ -448,6 +474,7 @@ function vNow(m){
     }
   }
 
+  m=P.more;
   var ql=qLeft();
   if(ql.length>1){
     var s3=el("div","sec");
