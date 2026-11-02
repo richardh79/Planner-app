@@ -6,7 +6,7 @@
 var K    = { tok:"planner.token", repo:"planner.repo", board:"planner.board", focus:"planner.focus",
              mins:"planner.mins", queue:"planner.queue", lang:"planner.lang", theme:"planner.theme",
              running:"planner.running" };
-var BUILD = "2026-09-27.3";   // bumped on every publish, checked against version.json
+var BUILD = "2026-11-02.1";   // bumped on every publish, checked against version.json
 function REPO(){ return getRaw(K.repo) || ""; }
 function API(){ return "https://api.github.com/repos/" + REPO(); }
 
@@ -1099,8 +1099,7 @@ function kicker(parent, text){ var s=el("span","kicker tag",text); parent.append
 
 function applyTheme(){
   var t=getRaw(K.theme);
-  if(t) document.documentElement.setAttribute("data-theme",t);
-  else document.documentElement.removeAttribute("data-theme");
+  document.documentElement.setAttribute("data-theme",t||"dark");
 }
 
 function render(){
@@ -2450,7 +2449,7 @@ Array.prototype.forEach.call(document.querySelectorAll("nav button"),function(b)
 $("gear").addEventListener("click",settings);
 $("theme").addEventListener("click",function(){
   var now=getRaw(K.theme);
-  var dark=(now==="dark")||(!now && matchMedia("(prefers-color-scheme: dark)").matches);
+  var dark=(now!=="light");
   putRaw(K.theme, dark?"light":"dark");
   applyTheme();
 });

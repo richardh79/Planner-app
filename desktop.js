@@ -11,7 +11,7 @@
 (function(){
 "use strict";
 
-var BUILD = "2026-09-27.3";   // bumped on every publish, checked against version.json
+var BUILD = "2026-11-02.1";   // bumped on every publish, checked against version.json
 var K = { tok:"planner.token", repo:"planner.repo", board:"planner.board",
           mins:"planner.mins", queue:"planner.queue", theme:"planner.theme",
           running:"planner.running", sel:"planner.sel", lang:"planner.lang" };
@@ -2771,7 +2771,7 @@ function checkForUpdate(){
 }
 
 /* ---------- boot ---------- */
-(function(){ var t=getRaw(K.theme); if(t) document.documentElement.setAttribute("data-theme",t); })();
+(function(){ var t=getRaw(K.theme); document.documentElement.setAttribute("data-theme",t||"dark"); })();
 
 withIcon($("palette"),"search"); withIcon($("refresh"),"refresh"); withIcon($("gear"),"settings");
 $("gear").addEventListener("click",settings);
