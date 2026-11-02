@@ -146,3 +146,28 @@
   .orb-add{margin-top:8px}
   .orb-add input,.orb-add button{min-height:42px}
 }
+
+/* ---- focus session ---- */
+.fx{position:fixed;inset:0;z-index:200;display:flex;flex-direction:column;gap:14px;padding:calc(env(safe-area-inset-top) + 22px) 22px calc(env(safe-area-inset-bottom) + 22px);
+  background:radial-gradient(700px 480px at 50% 0%,rgba(92,225,255,.12),transparent 62%),#04050A;color:var(--ink,#EEF3FA);overflow:auto}
+.fx-h{display:flex;flex-direction:column;gap:4px}
+.fx-tag{font-size:.7rem;letter-spacing:.16em;text-transform:uppercase;font-weight:800;color:var(--o-live,#5CE1FF)}
+.fx-t{font-size:1.5rem;line-height:1.15;letter-spacing:-.03em}
+.fx-b{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+.fx-l{font-size:.74rem;letter-spacing:.12em;text-transform:uppercase;font-weight:800;color:var(--dim,#8D94A3);margin-top:8px}
+.fx input{min-height:50px;padding:0 16px;border-radius:25px;background:rgba(255,255,255,.06);border:1px solid rgba(140,190,255,.2);color:inherit;font-size:16px;width:100%}
+.fx input:focus{outline:none;border-color:var(--o-live,#5CE1FF);box-shadow:0 0 0 3px rgba(92,225,255,.16)}
+.fx-chips{display:flex;gap:8px}
+.fx-chip{flex:1;min-height:46px;border-radius:23px;font-weight:700;text-align:center;background:rgba(255,255,255,.05);border:1px solid rgba(140,190,255,.18);color:var(--ink2,#B2BCCB)}
+.fx-chip.on{background:rgba(92,225,255,.16);border-color:var(--o-live,#5CE1FF);color:#fff}
+.fx-go{background:var(--o-live,#5CE1FF)}
+.fx-mid{position:relative;display:flex;align-items:center;justify-content:center;margin:8px auto 0;width:min(78vw,300px);aspect-ratio:1}
+.fx-ring{position:absolute;inset:0;width:100%;height:100%;filter:drop-shadow(0 0 16px rgba(92,225,255,.35))}
+.fx-arc{stroke:var(--o-live,#5CE1FF);transition:stroke-dashoffset 1s linear}
+.fx-clock{font:700 3.4rem/1 ui-monospace,"SF Mono",Menlo,Consolas,monospace;letter-spacing:-.04em}
+.fx-first{margin:0;text-align:center;font-size:1.05rem;line-height:1.4;color:var(--ink2,#B2BCCB)}
+.fx-park{margin-top:auto}
+.fx-foot{display:flex;align-items:center;justify-content:space-between;font-size:.82rem;color:var(--dim,#8D94A3)}
+.fx-sum{margin:0;font-size:1rem;color:var(--ink2,#B2BCCB);line-height:1.45}
+@media (min-width:700px){ .fx{align-items:center;padding-top:8vh} .fx>*{width:min(30rem,100%)} .fx-mid{width:300px} }
+@media (prefers-reduced-motion:reduce){ .fx-arc{transition:none} }

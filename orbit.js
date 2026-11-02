@@ -60,7 +60,7 @@ function queue(ctx){
     add({kind:"live", id:id, thread:t, tag:"Live", tone:"live", title:t.n,
       why:"The clock is running. Stop it when this block is done.",
       primary:{label:"Done", fn:function(){ ctx.stop(id); }},
-      secondary:{label:"Open", fn:function(){ ctx.openThread(t); }}});
+      secondary:{label:"Focus", fn:function(){ focus(ctx,t); }}});
   });
 
   ctx.openTodos().forEach(function(td){
@@ -85,7 +85,7 @@ function queue(ctx){
     add({kind:"thread", id:t.id, thread:t, tag:b==="overdue"?"Late":"Today", tone:b==="overdue"?"late":"flow", title:t.n,
       why:(b==="overdue"?"Its day has passed. ":"Dated for today. ")+"Next: "+(t.next||"open it and decide."),
       primary:{label:"Moved on", fn:function(){ var ix=ctx.stageIx(t), last=ctx.stageCount(t)-1; if(ix<last) ctx.setStage(t,ix+1); else ctx.openThread(t); }},
-      secondary:{label:"Start", fn:function(){ ctx.start(t.id); }}});
+      secondary:{label:"Focus", fn:function(){ focus(ctx,t); }}});
   });
 
   ctx.threads().forEach(function(t){
@@ -94,7 +94,7 @@ function queue(ctx){
     add({kind:"thread", id:t.id, thread:t, tag:"Yours", tone:"flow", title:t.n,
       why:"At "+ctx.stageName(t)+". Next: "+(t.next||"open it and decide."),
       primary:{label:"Moved on", fn:function(){ ctx.setStage(t,ix+1); }},
-      secondary:{label:"Start", fn:function(){ ctx.start(t.id); }}});
+      secondary:{label:"Focus", fn:function(){ focus(ctx,t); }}});
   });
   return q;
 }
@@ -114,6 +114,104 @@ function rings(ctx, closedToday){
   var tx=sv("text",{x:60,y:64,"text-anchor":"middle","class":"orb-n"}); tx.textContent=String(closedToday); s.appendChild(tx);
   var tl=sv("text",{x:60,y:79,"text-anchor":"middle","class":"orb-l"}); tl.textContent="closed today"; s.appendChild(tl);
   return s;
+}
+
+
+/* A focus session, one thing on the whole screen.
+   Three beats, each there for a reason:
+   1. Before: name the first action. A plan of the form "I will do X" is easier to start than a vague wish.
+   2. During: the clock, the one thing, a place to park a stray thought instead of acting on it, and a
+      count of how often the page was left, which is a measure, not a rebuke.
+   3. After: write where you stopped and the next step, which becomes a to-do on that thread. Leaving
+      work with a ready-to-resume note is the usual remedy for the pull of an unfinished task. */
+function focus(ctx, t){
+  if(document.getElementById("fx")) return;
+  var ov=el("div","fx"); ov.id="fx"; ov.setAttribute("role","dialog"); ov.setAttribute("aria-label","Focus session");
+  var len=25, total=0, t0=0, left=0, tick=null, away=0, hiddenAt=0, parked=0, lock=null, rounds=0;
+  function close(){
+    if(tick) clearInterval(tick);
+    document.removeEventListener("visibilitychange",vis);
+    try{ if(lock&&lock.release) lock.release(); }catch(e){}
+    if(ov.parentNode) ov.parentNode.removeChild(ov);
+    ctx.rerender();
+  }
+  function vis(){
+    if(document.hidden){ hiddenAt=Date.now(); }
+    else if(hiddenAt && Date.now()-hiddenAt>5000){ away++; var a=ov.querySelector(".fx-away"); if(a) a.textContent=awayText(); hiddenAt=0; }
+    else hiddenAt=0;
+  }
+  function awayText(){ return away?("Left the page "+away+(away===1?" time":" times")):"Stayed on the page"; }
+  function head(sub){ var h=el("div","fx-h"); h.appendChild(el("span","fx-tag",sub)); h.appendChild(el("b","fx-t any",t.n)); return h; }
+
+  function setup(){
+    ov.innerHTML=""; ov.appendChild(head("Focus"));
+    var box=el("div","fx-b");
+    box.appendChild(el("label","fx-l","The first action, in one line"));
+    var inp=el("input"); inp.type="text"; inp.maxLength=140; inp.value=t.next||""; inp.placeholder="I will…"; box.appendChild(inp);
+    box.appendChild(el("label","fx-l","How long"));
+    var row=el("div","fx-chips");
+    [25,50,90].forEach(function(m){
+      var c=el("button","fx-chip"+(m===len?" on":""),m+" min"); c.type="button";
+      c.addEventListener("click",function(){ len=m; Array.prototype.forEach.call(row.children,function(x){ x.classList.toggle("on",x===c); }); });
+      row.appendChild(c);
+    });
+    box.appendChild(row);
+    var go=el("button","orb-go fx-go","Begin"); go.type="button";
+    go.addEventListener("click",function(){ run(inp.value.trim()); });
+    var no=el("button","orb-alt quiet","Not now"); no.type="button"; no.addEventListener("click",close);
+    var act=el("div","orb-act"); act.appendChild(go); act.appendChild(no); box.appendChild(act);
+    ov.appendChild(box); setTimeout(function(){ try{ inp.focus(); }catch(e){} },50);
+  }
+
+  function run(first){
+    total=len*60; t0=Date.now(); rounds++;
+    ctx.start(t.id);
+    try{ if(navigator.wakeLock) navigator.wakeLock.request("screen").then(function(l){ lock=l; }).catch(function(){}); }catch(e){}
+    document.addEventListener("visibilitychange",vis);
+    ov.innerHTML=""; ov.appendChild(head("In focus"));
+    var mid=el("div","fx-mid");
+    var R=44, C=2*Math.PI*R;
+    var s=sv("svg",{viewBox:"0 0 100 100","class":"fx-ring"});
+    s.appendChild(sv("circle",{cx:50,cy:50,r:R,fill:"none","class":"orb-track","stroke-width":3}));
+    var arc=sv("circle",{cx:50,cy:50,r:R,fill:"none","class":"fx-arc","stroke-width":3,"stroke-linecap":"round","stroke-dasharray":C+" "+C,transform:"rotate(-90 50 50)"});
+    s.appendChild(arc); mid.appendChild(s);
+    var clk=el("div","fx-clock num","--:--"); mid.appendChild(clk);
+    ov.appendChild(mid);
+    if(first) ov.appendChild(el("p","fx-first any",first));
+    var park=el("form","orb-add fx-park"); var pi=el("input"); pi.type="text"; pi.maxLength=140; pi.placeholder="Park a stray thought…"; pi.setAttribute("aria-label","Park a thought");
+    var pb=el("button",null,"Park"); pb.type="submit"; park.appendChild(pi); park.appendChild(pb);
+    park.addEventListener("submit",function(e){ e.preventDefault(); var v=pi.value.trim(); if(!v) return; ctx.addTodo(null,v,null,"focus",true); parked++; pi.value=""; pi.placeholder="Parked. Back to it."; });
+    ov.appendChild(park);
+    var ft=el("div","fx-foot"); ft.appendChild(el("span","fx-away",awayText()));
+    var endb=el("button","orb-alt quiet","End early"); endb.type="button"; endb.addEventListener("click",finish);
+    ft.appendChild(endb); ov.appendChild(ft);
+    function paint(){
+      left=Math.max(0,total-Math.round((Date.now()-t0)/1000));
+      var m=Math.floor(left/60), sec=left%60; clk.textContent=(m<10?"0":"")+m+":"+(sec<10?"0":"")+sec;
+      arc.setAttribute("stroke-dashoffset",String(C*(1-left/total)));
+      if(left<=0){ try{ if(navigator.vibrate) navigator.vibrate([200,100,200]); }catch(e){} finish(); }
+    }
+    paint(); tick=setInterval(paint,1000);
+  }
+
+  function finish(){
+    if(tick){ clearInterval(tick); tick=null; }
+    var did=Math.max(1,Math.round((Date.now()-t0)/60000));
+    ov.innerHTML=""; ov.appendChild(head("Session over"));
+    var box=el("div","fx-b");
+    box.appendChild(el("p","fx-sum",did+" min on this"+(parked?(", "+parked+" thought"+(parked===1?"":"s")+" parked"):"")+". "+awayText()+"."));
+    box.appendChild(el("label","fx-l","Where did you stop, and what is the next step?"));
+    var inp=el("input"); inp.type="text"; inp.maxLength=140; inp.placeholder="Next I will…"; box.appendChild(inp);
+    function save(){ var v=inp.value.trim(); if(v) ctx.addTodo(t.id,"Resume: "+v,ctx.today(),"focus",true); }
+    var act=el("div","orb-act");
+    var again=el("button","orb-go","Another round"); again.type="button";
+    again.addEventListener("click",function(){ save(); parked=0; away=0; run(inp.value.trim()); });
+    var done=el("button","orb-alt","Done for now"); done.type="button";
+    done.addEventListener("click",function(){ save(); ctx.stop(t.id); close(); });
+    act.appendChild(again); act.appendChild(done); box.appendChild(act);
+    ov.appendChild(box); setTimeout(function(){ try{ inp.focus(); }catch(e){} },50);
+  }
+  document.body.appendChild(ov); setup();
 }
 
 function build(ctx){
@@ -203,5 +301,5 @@ function build(ctx){
   return root;
 }
 
-window.Orbit={ build:build };
+window.Orbit={ build:build, focus:focus };
 })();
