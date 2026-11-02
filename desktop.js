@@ -11,7 +11,7 @@
 (function(){
 "use strict";
 
-var BUILD = "2026-11-02.1";   // bumped on every publish, checked against version.json
+var BUILD = "2026-11-02.3";   // bumped on every publish, checked against version.json
 var K = { tok:"planner.token", repo:"planner.repo", board:"planner.board",
           mins:"planner.mins", queue:"planner.queue", theme:"planner.theme",
           running:"planner.running", sel:"planner.sel", lang:"planner.lang" };
@@ -2459,6 +2459,12 @@ function linkBox(u){
   box.appendChild(row);
   return box;
 }
+function orbitCtx(){ return { board:board, threads:function(){ return board.threads; }, T:T, today:localDay,
+    statuses:function(){ return statuses; }, todos:function(){ return todos; }, ticks:function(){ return ticks; },
+    openTodos:openTodos, doneTodo:doneTodo, addTodo:addTodo, needsChase:needsChase, clockDays:clockDays,
+    markChased:markChased, bucketOf:bucketOf, stageIx:stageIx, stageCount:stageCount, stageName:stageName,
+    setStage:setStage, runningIds:runIds, start:start, stop:stop, openThread:function(t){ openThread(t.id); }, rerender:render }; }
+
 function detailLook(d){
   if(!connected()){
     d.appendChild(el("h2",null,"One look"));
@@ -2470,6 +2476,7 @@ function detailLook(d){
   hd.appendChild(el("span","meta",FULL[new Date().getDay()]+" "+fmtDay(today())+" · board "+(board.updated||"")));
   d.appendChild(hd);
   if(board.headline) d.appendChild(el("p","lead wrapall",board.headline));
+  if(window.Orbit && board.threads.length) d.appendChild(window.Orbit.build(orbitCtx()));
   var g=el("div","lookgrid"); d.appendChild(g);
 
   var gl=(board.goals||[]).filter(function(x){ return x.target; });
