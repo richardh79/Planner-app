@@ -1,0 +1,121 @@
+/* Orbit skin. Loaded after each page's own styles.
+   Dark only: the light theme keeps the paper look he can still choose.
+   Two jobs: a darker, deeper ground with glass panels and one cold light, and the
+   styles for the one-look layer in orbit.js.
+   Colour means one thing each: amber late, cyan live, violet a person waiting,
+   green closed. */
+
+:root[data-theme="dark"]{
+  --bg:#06070B; --surface:rgba(255,255,255,.04); --raise:rgba(255,255,255,.05);
+  --sink:rgba(255,255,255,.055); --sink2:rgba(255,255,255,.09);
+  --hair:rgba(140,190,255,.15); --line:rgba(140,190,255,.15); --line2:rgba(140,190,255,.08);
+  --ink:#EEF3FA; --ink2:#B2BCCB;
+  --accent:#5CE1FF; --accent-soft:rgba(92,225,255,.14); --on-accent:#031016;
+  --o-live:#5CE1FF; --o-person:#A99BFF; --o-late:#FFB454; --o-done:#46F0A0;
+  --shadow:0 1px 0 rgba(255,255,255,.04) inset, 0 18px 40px rgba(0,0,0,.5);
+}
+:root[data-theme="dark"] body{
+  background:
+    radial-gradient(900px 520px at 85% -8%, rgba(125,95,255,.20), transparent 62%),
+    radial-gradient(760px 460px at -8% 6%, rgba(40,200,255,.14), transparent 58%),
+    #06070B;
+  background-attachment:fixed;
+}
+:root[data-theme="dark"] body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.5;
+  background-image:linear-gradient(rgba(140,190,255,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(140,190,255,.045) 1px,transparent 1px);
+  background-size:44px 44px;
+  -webkit-mask-image:radial-gradient(ellipse at 50% 0%,#000 10%,transparent 70%);mask-image:radial-gradient(ellipse at 50% 0%,#000 10%,transparent 70%);
+}
+:root[data-theme="dark"] main,:root[data-theme="dark"] header,:root[data-theme="dark"] nav,:root[data-theme="dark"] .app{position:relative;z-index:1}
+:root[data-theme="dark"] header{background:rgba(6,7,11,.72);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+:root[data-theme="dark"] nav{background:rgba(6,7,11,.8);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);border-top:1px solid var(--hair)}
+:root[data-theme="dark"] nav button[aria-current="page"]{color:var(--accent);text-shadow:0 0 14px rgba(92,225,255,.55)}
+:root[data-theme="dark"] .hbar h1{background:linear-gradient(120deg,#fff 30%,#9FE8FF 70%,#B9AEFF);-webkit-background-clip:text;background-clip:text;color:transparent}
+:root[data-theme="dark"] .num,:root[data-theme="dark"] .hero .lv{font-family:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;font-feature-settings:"tnum"}
+:root[data-theme="dark"] .hero .lv{text-shadow:0 0 22px color-mix(in srgb,var(--a) 55%,transparent)}
+:root[data-theme="dark"] .hero .big{letter-spacing:-.04em}
+:root[data-theme="dark"] .run.live .pill{box-shadow:0 0 18px color-mix(in srgb,var(--a) 50%,transparent)}
+:root[data-theme="dark"] .stone.here .bead{box-shadow:0 0 0 3px var(--bg),0 0 0 5px var(--a),0 0 16px var(--a)}
+:root[data-theme="dark"] .blk.on .d{box-shadow:-10px 0 18px -12px var(--a)}
+
+/* white text on the lighter dark-theme accents does not read: use the dark ink on them */
+:root[data-theme="dark"] .wide:not(.ghost),:root[data-theme="dark"] .sbtn.pri,:root[data-theme="dark"] .thb button.go,
+:root[data-theme="dark"] .run.live .pill,:root[data-theme="dark"] .opt,:root[data-theme="dark"] .slot.done,
+:root[data-theme="dark"] .rvb.start,:root[data-theme="dark"] .pill.live,:root[data-theme="dark"] .step.at{color:#031016}
+
+/* ---- the one-look layer ---- */
+.orbit{position:relative;margin:6px 0 10px;max-width:46rem}
+.orb-top{display:flex;gap:14px;align-items:center}
+.orb-rings{width:128px;height:128px;flex:none;overflow:visible;filter:drop-shadow(0 0 12px rgba(92,225,255,.16))}
+.orb-track{stroke:rgba(255,255,255,.08)}
+.orb-arc{stroke:var(--g,var(--accent));filter:drop-shadow(0 0 3px var(--g,var(--accent)));animation:orb-draw 1.1s cubic-bezier(.2,.8,.2,1) both}
+.orb-arc.near{animation:orb-draw 1.1s cubic-bezier(.2,.8,.2,1) both,orb-glow 2.6s 1.2s ease-in-out infinite}
+@keyframes orb-draw{from{stroke-dasharray:0 var(--full)}}
+@keyframes orb-glow{50%{filter:drop-shadow(0 0 9px var(--g,var(--accent)))}}
+.orb-n{font:700 30px ui-monospace,"SF Mono",Menlo,Consolas,monospace;fill:var(--ink)}
+.orb-l{font:700 6.4px system-ui,sans-serif;fill:var(--dim);letter-spacing:.14em;text-transform:uppercase}
+
+.orb-side{flex:1;min-width:0;max-width:24rem;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.orb-tile{display:flex;flex-direction:column;gap:1px;padding:10px 12px;border-radius:14px;text-align:left;
+  background:var(--raise);border:1px solid var(--hair);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+.orb-tile b{font:700 1.4rem/1.1 ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+.orb-tile span{font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:var(--dim)}
+.orb-tile.late b{color:var(--o-late)} .orb-tile.live b{color:var(--o-live)}
+.orb-tile.person b{color:var(--o-person)} .orb-tile.flow b{color:var(--ink)}
+.orb-tile.zero b{color:var(--dim);opacity:.55}
+.orb-tile:active{transform:scale(.97)}
+
+.orb-meta{display:flex;flex-wrap:wrap;gap:6px 14px;margin:12px 2px 0;font-size:.8rem;font-weight:600;color:var(--dim)}
+.orb-run{color:var(--o-done)} .orb-oth.warn{color:var(--o-person)}
+
+.orb-toast{margin:12px 0 0;padding:9px 14px;border-radius:12px;font-size:.88rem;color:var(--ink2);
+  background:rgba(70,240,160,.08);border:1px solid rgba(70,240,160,.28);animation:orb-toast 3.4s ease both}
+.orb-toast b{color:var(--o-done);letter-spacing:.06em;text-transform:uppercase;font-size:.74rem}
+@keyframes orb-toast{0%{opacity:0;transform:translateY(-6px)}12%,80%{opacity:1;transform:none}100%{opacity:.0}}
+
+.orb-card{--t:var(--o-live);position:relative;margin-top:12px;padding:18px 18px 16px;border-radius:20px;overflow:hidden;
+  background:linear-gradient(160deg,rgba(255,255,255,.075),rgba(255,255,255,.025));
+  border:1px solid color-mix(in srgb,var(--t) 38%,transparent);
+  box-shadow:0 0 0 1px rgba(255,255,255,.03) inset,0 18px 44px rgba(0,0,0,.45),0 0 34px color-mix(in srgb,var(--t) 16%,transparent);
+  display:flex;flex-direction:column;gap:6px}
+.orb-card::before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:3px;border-radius:3px;background:var(--t);box-shadow:0 0 14px var(--t)}
+.orb-card.late{--t:var(--o-late)} .orb-card.person{--t:var(--o-person)} .orb-card.live{--t:var(--o-live)} .orb-card.flow{--t:var(--o-live)}
+.orb-toast + .orb-card{animation:orb-in .55s cubic-bezier(.2,.8,.2,1) both}
+@keyframes orb-in{from{opacity:0;transform:translateY(14px) scale(.98)}}
+.orb-tag{font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;font-weight:800;color:var(--t)}
+.orb-title{font-size:1.55rem;line-height:1.12;font-weight:700;letter-spacing:-.03em}
+.orb-why{font-size:.95rem;line-height:1.4;color:var(--ink2)}
+.orb-act{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.orb-go{min-height:50px;padding:0 24px;border-radius:26px;font-weight:800;font-size:1rem;letter-spacing:.02em;text-align:center;
+  background:var(--t);color:#031016;box-shadow:0 0 26px color-mix(in srgb,var(--t) 55%,transparent);transition:transform .12s}
+.orb-go:active{transform:scale(.95)}
+.orb-go:disabled{opacity:.9}
+.orb-alt{min-height:50px;padding:0 16px;border-radius:26px;font-weight:700;font-size:.92rem;text-align:center;
+  background:rgba(255,255,255,.07);border:1px solid var(--hair);color:var(--ink)}
+.orb-alt.quiet{background:none;border-color:transparent;color:var(--dim);padding:0 8px}
+.orb-card.empty{--t:var(--o-done)}
+
+/* closing: a pulse of green through the card, the tag flips, then the app redraws with the next thing */
+.orb-card.burst{--t:var(--o-done);animation:orb-burst .56s ease both}
+.orb-card.burst .orb-title{text-decoration:line-through;text-decoration-color:var(--o-done);opacity:.7;transition:opacity .3s}
+.orb-card.burst::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:radial-gradient(circle at 50% 100%,rgba(70,240,160,.55),transparent 60%);animation:orb-flash .56s ease both}
+@keyframes orb-burst{0%{transform:scale(1)}35%{transform:scale(1.025)}100%{transform:scale(.99);opacity:.55}}
+@keyframes orb-flash{from{opacity:0}30%{opacity:1}to{opacity:0}}
+
+.orb-next{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px}
+.orb-then{font-size:.68rem;letter-spacing:.14em;text-transform:uppercase;font-weight:800;color:var(--dim);margin-right:2px}
+.orb-chip{display:inline-flex;align-items:center;gap:8px;max-width:100%;min-height:36px;padding:0 14px 0 11px;border-radius:18px;
+  font-size:.84rem;font-weight:600;color:var(--ink2);background:var(--raise);border:1px solid var(--hair);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.orb-chip i{flex:none;width:8px;height:8px;border-radius:50%;background:var(--o-live);box-shadow:0 0 8px var(--o-live)}
+.orb-chip.late i{background:var(--o-late);box-shadow:0 0 8px var(--o-late)}
+.orb-chip.person i{background:var(--o-person);box-shadow:0 0 8px var(--o-person)}
+
+.orb-add{display:flex;gap:8px;margin-top:12px}
+.orb-add input{flex:1;min-width:0;min-height:46px;padding:0 16px;border-radius:23px;background:var(--raise);border:1px solid var(--hair);color:var(--ink);font-size:16px}
+.orb-add input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.orb-add button{flex:none;min-height:46px;padding:0 20px;border-radius:23px;font-weight:800;background:rgba(255,255,255,.08);border:1px solid var(--hair);color:var(--accent);text-align:center}
+
+@media (max-width:380px){ .orb-top{flex-direction:column;align-items:stretch} .orb-rings{align-self:center} }
+@media (prefers-reduced-motion:reduce){ .orb-arc,.orb-arc.near,.orb-toast,.orb-card,.orb-card.burst,.orb-card.burst::after{animation:none!important} }

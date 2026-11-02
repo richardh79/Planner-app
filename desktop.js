@@ -1591,6 +1591,12 @@ function linkBox(u){
   box.appendChild(row);
   return box;
 }
+function orbitCtx(){ return { board:board, threads:function(){ return board.threads; }, T:T, today:localDay,
+    statuses:function(){ return statuses; }, todos:function(){ return todos; }, ticks:function(){ return ticks; },
+    openTodos:openTodos, doneTodo:doneTodo, addTodo:addTodo, needsChase:needsChase, clockDays:clockDays,
+    markChased:markChased, bucketOf:bucketOf, stageIx:stageIx, stageCount:stageCount, stageName:stageName,
+    setStage:setStage, runningIds:runningIds, start:start, stop:stop, openThread:function(t){ openThread(t.id); }, rerender:render }; }
+
 function detailLook(d){
   if(!connected()){
     d.appendChild(el("h2",null,"One look"));
@@ -1602,6 +1608,7 @@ function detailLook(d){
   hd.appendChild(el("span","meta",FULL[new Date().getDay()]+" "+fmtDay(today())+" · board "+(board.updated||"")));
   d.appendChild(hd);
   if(board.headline) d.appendChild(el("p","lead wrapall",board.headline));
+  if(window.Orbit && board.threads.length) d.appendChild(window.Orbit.build(orbitCtx()));
   var g=el("div","lookgrid"); d.appendChild(g);
 
   var gl=(board.goals||[]).filter(function(x){ return x.target; });
@@ -1885,7 +1892,7 @@ function checkForUpdate(){
 }
 
 /* ---------- boot ---------- */
-(function(){ var t=getRaw(K.theme); if(t) document.documentElement.setAttribute("data-theme",t); })();
+(function(){ var t=getRaw(K.theme); document.documentElement.setAttribute("data-theme",t||"dark"); })();
 
 withIcon($("palette"),"search"); withIcon($("refresh"),"refresh"); withIcon($("gear"),"settings");
 $("gear").addEventListener("click",settings);

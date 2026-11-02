@@ -248,8 +248,7 @@ function kicker(parent, text){ var s=el("span","kicker tag",text); parent.append
 
 function applyTheme(){
   var t=getRaw(K.theme);
-  if(t) document.documentElement.setAttribute("data-theme",t);
-  else document.documentElement.removeAttribute("data-theme");
+  document.documentElement.setAttribute("data-theme",t||"dark");
 }
 
 function render(){
@@ -273,8 +272,15 @@ function render(){
 }
 
 /* ---------- now ---------- */
+function orbitCtx(){ return { board:board, threads:function(){ return board.threads; }, T:T, today:localDay,
+    statuses:function(){ return statuses; }, todos:function(){ return todos; }, ticks:function(){ return ticks; },
+    openTodos:openTodos, doneTodo:doneTodo, addTodo:addTodo, needsChase:needsChase, clockDays:clockDays,
+    markChased:markChased, bucketOf:bucketOf, stageIx:stageIx, stageCount:stageCount, stageName:stageName,
+    setStage:setStage, runningIds:runningIds, start:startFocus, stop:stopFocus, openThread:openThread, rerender:render }; }
+
 function vNow(m){
   var cur=curBlock(), nx=nextBlock(), t=nowMin();
+  if(window.Orbit && board.threads.length) m.appendChild(window.Orbit.build(orbitCtx()));
   var acc, title, sub, lv, lc;
   if(cur){
     acc=cur.b[3]; title=cur.b[1]; sub=cur.b[2];
@@ -1589,7 +1595,7 @@ Array.prototype.forEach.call(document.querySelectorAll("nav button"),function(b)
 $("gear").addEventListener("click",settings);
 $("theme").addEventListener("click",function(){
   var now=getRaw(K.theme);
-  var dark=(now==="dark")||(!now && matchMedia("(prefers-color-scheme: dark)").matches);
+  var dark=(now!=="light");
   putRaw(K.theme, dark?"light":"dark");
   applyTheme();
 });

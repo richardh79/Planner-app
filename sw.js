@@ -1,14 +1,16 @@
 /* Planner service worker.
    Shell is cached so the app opens instantly and works with no signal.
    Data is never cached here; it lives in localStorage, written by app.js. */
-var CACHE = "planner-v28";
+var CACHE = "planner-v29";
 var SHELL = [
   "./",
   "./index.html",
-  "./core.js?v=1",
-  "./app.js?v=24",
+  "./orbit.css?v=3",
+  "./orbit.js?v=2",
+  "./core.js?v=2",
+  "./app.js?v=25",
   "./desktop.html",
-  "./desktop.js?v=19",
+  "./desktop.js?v=20",
   "./manifest.webmanifest",
   "./desktop.webmanifest",
   "./icon-192.png",
