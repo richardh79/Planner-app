@@ -22,6 +22,8 @@ function sv(t,a){ var e=document.createElementNS(NS,t); for(var k in a) e.setAtt
 
 var skip=0;              // how far the queue has been rotated by hand
 var closedNow={};        // ids closed in this session, so a closed thing does not come straight back
+var sdDraft="";
+var addDraft="";         // what he was typing in the add box when the page redrew
 var justClosed=null;     // what was just closed, shown once on the next draw
 
 function dayOf(iso){
@@ -291,12 +293,27 @@ function build(ctx){
     root.appendChild(nx);
   }
 
+  // the evening: close the day on purpose, and name tomorrow's first thing now, while the context is warm
+  if(new Date().getHours()>=18){
+    var sd=el("div","orb-sd");
+    sd.appendChild(el("span","orb-tag","Close the day"));
+    sd.appendChild(el("span","orb-why",closedToday?(closedToday+" closed today. "+(n?n+" still open.":"Nothing left open.")):(n?n+" still open, none closed today. Name one thing for tomorrow.":"Nothing open.")));
+    var sf=el("form","orb-add"); var si=el("input"); si.type="text"; si.maxLength=140; si.placeholder="Tomorrow's first thing\u2026"; si.setAttribute("aria-label","Tomorrow's first thing");
+    si.value=sdDraft; si.addEventListener("input",function(){ sdDraft=si.value; });
+    var sb=el("button",null,"Set"); sb.type="submit"; sf.appendChild(si); sf.appendChild(sb);
+    sf.addEventListener("submit",function(e){ e.preventDefault(); var v=si.value.trim(); if(!v) return; var d=new Date(today+"T12:00:00"); d.setDate(d.getDate()+1);
+      var tm=d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2);
+      ctx.addTodo(null,"First: "+v,tm,"shutdown"); si.value=""; sdDraft=""; });
+    sd.appendChild(sf); root.appendChild(sd);
+  }
+
   // add
   var f=el("form","orb-add"); f.setAttribute("autocomplete","off");
   var inp=el("input"); inp.type="text"; inp.placeholder="Add the next thing…"; inp.maxLength=160; inp.setAttribute("aria-label","Add a to-do for today");
   var ab=el("button",null,"Add"); ab.type="submit";
   f.appendChild(inp); f.appendChild(ab);
-  f.addEventListener("submit",function(e){ e.preventDefault(); var v=inp.value.trim(); if(!v) return; ctx.addTodo(null,v,today,"one look"); inp.value=""; });
+  inp.value=addDraft; inp.addEventListener("input",function(){ addDraft=inp.value; });
+  f.addEventListener("submit",function(e){ e.preventDefault(); var v=inp.value.trim(); if(!v) return; ctx.addTodo(null,v,today,"one look"); inp.value=""; addDraft=""; });
   root.appendChild(f);
   return root;
 }

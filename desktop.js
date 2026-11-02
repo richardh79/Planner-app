@@ -1591,6 +1591,8 @@ function linkBox(u){
   box.appendChild(row);
   return box;
 }
+function sessionsCtx(){ return { threads:function(){ return board.threads; }, T:T, stageName:stageName, openTodos:openTodos, getFile:getFile, appendLine:appendLine }; }
+
 function orbitCtx(){ return { board:board, threads:function(){ return board.threads; }, T:T, today:localDay,
     statuses:function(){ return statuses; }, todos:function(){ return todos; }, ticks:function(){ return ticks; },
     openTodos:openTodos, doneTodo:doneTodo, addTodo:addTodo, needsChase:needsChase, clockDays:clockDays,
@@ -1609,6 +1611,7 @@ function detailLook(d){
   d.appendChild(hd);
   if(board.headline) d.appendChild(el("p","lead wrapall",board.headline));
   if(window.Orbit && board.threads.length) d.appendChild(window.Orbit.build(orbitCtx()));
+  if(window.Sessions && board.threads.length) d.appendChild(window.Sessions.panel(sessionsCtx()));
   var g=el("div","lookgrid"); d.appendChild(g);
 
   var gl=(board.goals||[]).filter(function(x){ return x.target; });

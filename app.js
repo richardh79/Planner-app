@@ -272,6 +272,8 @@ function render(){
 }
 
 /* ---------- now ---------- */
+function sessionsCtx(){ return { threads:function(){ return board.threads; }, T:T, stageName:stageName, openTodos:openTodos, getFile:getFile, appendLine:appendLine }; }
+
 function orbitCtx(){ return { board:board, threads:function(){ return board.threads; }, T:T, today:localDay,
     statuses:function(){ return statuses; }, todos:function(){ return todos; }, ticks:function(){ return ticks; },
     openTodos:openTodos, doneTodo:doneTodo, addTodo:addTodo, needsChase:needsChase, clockDays:clockDays,
@@ -285,7 +287,7 @@ function vNow(m){
   /* The page was one long scroll. Now the top is the one-look card and the rest sits behind
      four tabs, so nothing is more than a tap away and nothing needs a scroll to find. */
   var host=m, P={}, tab0=getRaw("planner.ntab")||"today";
-  var TABS=[["today","Today",openTodos().length],["chase","Chase",board.threads.filter(needsChase).length],["week","Week",0],["more","More",qLeft().length]];
+  var TABS=[["today","Today",openTodos().length],["chase","Chase",board.threads.filter(needsChase).length],["week","Week",0],["pc","PC",0],["more","More",qLeft().length]];
   if(!P[tab0] && TABS.every(function(x){ return x[0]!==tab0; })) tab0="today";
   var bar=el("div","ntabs"); bar.setAttribute("role","tablist");
   TABS.forEach(function(x){
@@ -409,6 +411,8 @@ function vNow(m){
     se0.appendChild(e0); m.appendChild(se0);
   }
 
+  m=P.pc;
+  if(window.Sessions) m.appendChild(window.Sessions.panel(sessionsCtx()));
   m=P.more;
   if(board.headline){
     var s1=el("div","sec");
@@ -1635,7 +1639,14 @@ checkForUpdate();
 document.addEventListener("visibilitychange",function(){
   if(document.visibilityState==="visible") checkForUpdate();
 });
-setInterval(function(){ if(view==="now"||view==="threads") render(); }, 30000);
+setInterval(function(){
+  if(view!=="now" && view!=="threads") return;
+  /* A redraw wipes the fields on the page. Never do it while something is being typed. */
+  var a=document.activeElement, mn=$("main");
+  if(a && mn && mn.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return;
+  var ta=mn && mn.querySelector("textarea"); if(ta && ta.value) return;
+  render();
+}, 30000);
 
 if(token){
   flushQueue();
