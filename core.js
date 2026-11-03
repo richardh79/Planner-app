@@ -18,7 +18,7 @@ var K = { tok:"planner.token", repo:"planner.repo", board:"planner.board", focus
 /* Which page this is. Both pages share this file, and the commit message of every write names the device. */
 var WHERE = /desktop\.html/i.test(location.pathname) ? "desktop" : "phone";
 
-var BUILD = "2026-11-02.8";   // bumped on every publish, checked against version.json
+var BUILD = "2026-11-03.1";   // bumped on every publish, checked against version.json
 function REPO(){ return getRaw(K.repo) || ""; }
 function API(){ return "https://api.github.com/repos/" + REPO(); }
 

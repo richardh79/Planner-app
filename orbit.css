@@ -188,3 +188,12 @@
 .orb-sd{margin-top:12px;padding:12px 14px;border-radius:16px;border:1px dashed rgba(169,155,255,.4);background:rgba(169,155,255,.06);display:flex;flex-direction:column;gap:6px}
 .orb-sd .orb-tag{color:var(--o-person,#A99BFF)}
 .orb-sd .orb-add{margin-top:4px}
+
+.ses-l{display:flex;flex-direction:column;gap:6px}
+.ses-p{display:flex;align-items:center;gap:12px;width:100%;min-height:52px;padding:8px 12px;border-radius:14px;text-align:left;background:var(--raise);border:1px solid var(--hair)}
+.ses-p.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.ses-p i{flex:none;width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,.18)}
+.ses-p.live i{background:var(--o-live,#5CE1FF);box-shadow:0 0 10px var(--o-live,#5CE1FF);animation:pp 2s ease-in-out infinite}
+.ses-pt{flex:1;min-width:0;display:flex;flex-direction:column}
+.ses-pt b{font-size:.98rem;font-weight:600}
+.ses-pt span{font-size:.78rem;color:var(--dim)}

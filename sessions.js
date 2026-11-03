@@ -58,6 +58,23 @@ function panel(ctx){
       var rb=el("button","orb-alt","Check again"); rb.type="button"; rb.addEventListener("click",function(){ load(true).then(draw); }); body.appendChild(rb);
       return;
     }
+    // every project folder, at a glance: what moved, what is unsaved, whether Claude is working in it now
+    var list=el("div","ses-l");
+    function ago(iso){ if(!iso) return ""; var m=(Date.now()-new Date(iso).getTime())/60000; if(m<2) return "now"; if(m<60) return Math.round(m)+"m ago"; if(m<1440) return Math.round(m/60)+"h ago"; return Math.round(m/1440)+"d ago"; }
+    state.folders.folders.slice().sort(function(a,b){ return (b.last_session||b.last_commit||b.touched||"")<(a.last_session||a.last_commit||a.touched||"")?-1:1; }).forEach(function(x){
+      var live=x.last_session && (Date.now()-new Date(x.last_session).getTime())<15*60000;
+      var c=el("button","ses-p"+(live?" live":"")+(form.folder===x.name?" on":"")); c.type="button";
+      c.appendChild(el("i",null));
+      var tx=el("span","ses-pt"); tx.appendChild(el("b","any",x.name));
+      var bits=[]; if(x.branch) bits.push(x.branch); if(x.commits_7d) bits.push(x.commits_7d+" commits this week"); if(x.dirty) bits.push(x.dirty+" unsaved");
+      if(x.last_session) bits.push("Claude "+ago(x.last_session)); else if(x.last_commit) bits.push("last commit "+x.last_commit);
+      tx.appendChild(el("span","any",bits.join(" \u00b7 ")||"no activity recorded")); c.appendChild(tx);
+      c.addEventListener("click",function(){ form.folder=x.name; draw(); });
+      list.appendChild(c);
+    });
+    body.appendChild(list);
+    var stw=state.runs.filter(function(r){ return r.mode==="steward"; }).slice(-1)[0];
+    if(stw) body.appendChild(el("p","ses-n","Steward on the PC: "+stw.outcome+", "+ago(stw.at)+"."));
     var f=el("div","ses-f");
     var fs=el("select"); fs.setAttribute("aria-label","Project folder");
     state.folders.folders.forEach(function(x){ var o=el("option",null,x.name+(x.touched?"  \u00b7  "+x.touched:"")); o.value=x.name; fs.appendChild(o); });
