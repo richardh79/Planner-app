@@ -18,7 +18,7 @@ var K = { tok:"planner.token", repo:"planner.repo", board:"planner.board", focus
 /* Which page this is. Both pages share this file, and the commit message of every write names the device. */
 var WHERE = /desktop\.html/i.test(location.pathname) ? "desktop" : "phone";
 
-var BUILD = "2026-11-03.1";   // bumped on every publish, checked against version.json
+var BUILD = "2026-11-04.1";   // bumped on every publish, checked against version.json
 function REPO(){ return getRaw(K.repo) || ""; }
 function API(){ return "https://api.github.com/repos/" + REPO(); }
 
@@ -829,6 +829,9 @@ function epochDay(){ var d=new Date(); return Math.floor(Date.UTC(d.getFullYear(
 /* The same pick as the morning brief: the day number modulo what is left. */
 function todaysQuestion(){
   var l=qLeft();
+  /* A sign-off request from the PC (id "so-...") waits on a critical step, so it comes before the day's pick. */
+  var so=l.filter(function(q){ return String(q.id).indexOf("so-")===0; });
+  if(so.length && !qSkip) return so[0];
   return l.length ? l[(epochDay()+qSkip)%l.length] : null;
 }
 
