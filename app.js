@@ -256,14 +256,19 @@ function render(){
   try{
     m.innerHTML="";
     $("clk").textContent = DAYS[new Date().getDay()].toUpperCase()+" "+hm(nowMin());
-    $("ttl").textContent = ({now:"Now",map:"Map",threads:"Work",say:"Say",inbox:"Inbox"}[view])||"Now";
-    var VIEWS={now:vNow, map:vMap, threads:vThreads, say:vSay, inbox:vInbox};
+    var SIMPLE = document.documentElement.getAttribute("data-layout")==="simple";
+    $("ttl").textContent = ((SIMPLE?{now:"Today",map:"Plan",threads:"Projects",say:"Add",inbox:"Inbox"}
+                                   :{now:"Now",map:"Map",threads:"Work",say:"Say",inbox:"Inbox"})[view])||(SIMPLE?"Today":"Now");
+    var VIEWS = SIMPLE ? {now:p2Today, map:p2Plan, threads:p2Projects, say:vSay, inbox:vInbox}
+                       : {now:vNow, map:vMap, threads:vThreads, say:vSay, inbox:vInbox};
     var fn=VIEWS[view];
     if(typeof fn!=="function"){ view="now"; fn=vNow; }
     fn(m);
     Array.prototype.forEach.call(document.querySelectorAll("nav button"),function(b){
       if(b.dataset.v===view) b.setAttribute("aria-current","page"); else b.removeAttribute("aria-current");
     });
+    var bdg=document.querySelector('nav button[data-v="now"] .p2-badge');
+    if(bdg){ var nso=signoffs().length; bdg.textContent=nso?String(nso):""; bdg.style.display=nso?"":"none"; }
   }catch(e){
     m.innerHTML="";
     var b=band("flat"); b.appendChild(el("p","note bad","Could not draw this screen: "+e.message));
@@ -1550,6 +1555,12 @@ function settings(){
     var st=el("p","note", (token&&REPO())?("Connected to "+REPO()+"."):"Not connected.");
     st.id="setst"; sh.appendChild(st);
 
+    var fl=el("div","fld"); fl.appendChild(el("label","tag","Layout"));
+    var simpleOn=document.documentElement.getAttribute("data-layout")==="simple";
+    var lb=el("button","wide ghost", simpleOn?"Simple layout is on. Switch to classic":"Classic layout is on. Switch to simple");
+    lb.addEventListener("click",function(){ putRaw("planner.layout", simpleOn?"classic":"simple"); location.reload(); });
+    fl.appendChild(lb); sh.appendChild(fl);
+
     var fn=el("div","fld"); fn.appendChild(el("label","tag","Notifications"));
     pushPanel(fn,"wide ghost","note"); sh.appendChild(fn);
 
@@ -1619,6 +1630,266 @@ function checkForUpdate(){
     .catch(function(){});
 }
 
+/* ---------- the simple phone layout (next.html sets data-layout="simple") ----------
+   Five tabs, each about one screen high; details open in sheets. Drawing only: every write is the app's own. */
+var SVGNS="http://www.w3.org/2000/svg";
+
+function ring(frac, color, size, inner, dashed){
+  var s=size||56, r=s/2-5, c=2*Math.PI*r;
+  var svg=document.createElementNS(SVGNS,"svg");
+  svg.setAttribute("viewBox","0 0 "+s+" "+s); svg.setAttribute("width",s); svg.setAttribute("height",s);
+  svg.setAttribute("class","ring"); svg.setAttribute("aria-hidden","true");
+  var bg=document.createElementNS(SVGNS,"circle");
+  bg.setAttribute("cx",s/2); bg.setAttribute("cy",s/2); bg.setAttribute("r",r); bg.setAttribute("class","ring-bg");
+  if(dashed) bg.setAttribute("stroke-dasharray","3 4");
+  svg.appendChild(bg);
+  if(frac>0){
+    var fg=document.createElementNS(SVGNS,"circle");
+    fg.setAttribute("cx",s/2); fg.setAttribute("cy",s/2); fg.setAttribute("r",r); fg.setAttribute("class","ring-fg");
+    fg.setAttribute("stroke","var("+(color||"--accent")+")");
+    fg.setAttribute("stroke-dasharray",(c*Math.min(frac,1))+" "+c);
+    fg.setAttribute("transform","rotate(-90 "+s/2+" "+s/2+")");
+    svg.appendChild(fg);
+  }
+  if(inner!=null){
+    var tx=document.createElementNS(SVGNS,"text");
+    tx.setAttribute("x","50%"); tx.setAttribute("y","50%"); tx.setAttribute("class","ring-tx");
+    tx.setAttribute("dominant-baseline","central"); tx.setAttribute("text-anchor","middle");
+    tx.textContent=inner; svg.appendChild(tx);
+  }
+  return svg;
+}
+
+function listSheet(kick, title, items, rowFn, empty){
+  sheet(function(sh){
+    shHead(sh, kick, title);
+    if(!items.length){ sh.appendChild(el("p","empty", empty||"Nothing here.")); return; }
+    items.forEach(function(x){ sh.appendChild(rowFn(x)); });
+  });
+}
+
+function signoffs(){ return qLeft().filter(function(q){ return String(q.id).indexOf("so-")===0; }); }
+function lateThreads(){ return board.threads.filter(function(t){ return bucketOf(t)==="overdue"; }); }
+function todayThreads(){ return board.threads.filter(function(t){ var b=bucketOf(t); return b==="today"; }); }
+function chaseThreads(){ return board.threads.filter(needsChase).sort(function(a,b){ return clockDays(b)-clockDays(a); }); }
+
+/* ---------- Today ---------- */
+function p2Today(m){
+  var cur=curBlock(), nx=nextBlock(), t=nowMin();
+
+  // 1. the hour, in one line
+  var strip=el("button","p2-strip");
+  var acc=cur?cur.b[3]:"--neutral";
+  strip.style.setProperty("--a","var("+acc+")");
+  strip.appendChild(el("span","p2-dot"));
+  var tx=el("span","p2-strip-t");
+  tx.appendChild(el("b","any", cur?cur.b[1]:"Off the clock"));
+  tx.appendChild(el("span",null, cur?(dur(cur.b[5]-t)+" left"+(nx?" · next "+hm(nx[4])+" "+nx[1]:"")) :
+                                     (nx?"next "+hm(nx[4])+" "+nx[1]:"nothing else today")));
+  strip.appendChild(tx);
+  strip.addEventListener("click",function(){ view="map"; render(); });
+  m.appendChild(strip);
+
+  // 2. the one thing that needs him
+  var so=signoffs();
+  if(so.length){
+    var q=so[0], h=band("p2-hero p2-sign","--hot");
+    kicker(h, "Your sign-off"+(so.length>1?" · 1 of "+so.length:""));
+    h.appendChild(el("p","p2-hero-q any", String(q.q).replace(/^Sign-off:\s*/,"")));
+    if(q.why) h.appendChild(el("p","p2-hero-why any", q.why));
+    var row=el("div","p2-yesno");
+    [["Approve","p2-yes"],["Reject","p2-no"]].forEach(function(o){
+      var b=el("button",o[1],o[0]);
+      b.addEventListener("click",function(){ answerQ(q,o[0]); render(); });
+      row.appendChild(b);
+    });
+    h.appendChild(row); m.appendChild(h);
+  } else {
+    var qq=todaysQuestion();
+    if(qq) m.appendChild(questionCard(qq));
+  }
+
+  // 3. four big tiles; each opens its list
+  var tds=openTodos(), late=lateThreads(), ch=chaseThreads(), on=todayThreads();
+  var grid=el("div","p2-tiles");
+  [
+    ["Late", late.length, "--bad", function(){ listSheet("Late","Past their day", late, threadRow, "Nothing is late."); }],
+    ["To do", tds.length, "--accent", function(){ listSheet("To do", tds.length+" open", tds, todoRow, "No open to-dos."); }],
+    ["Chase", ch.length, "--hot", function(){ listSheet("Chase","Waiting too long", ch, chaseCard, "Nobody to chase."); }],
+    ["Today", on.length, "--good", function(){ listSheet("Today","Dated for today", on, threadRow, "Nothing dated for today."); }]
+  ].forEach(function(x){
+    var b=el("button","p2-tile"+(x[1]?"":" zero"));
+    b.style.setProperty("--a","var("+x[2]+")");
+    b.appendChild(el("span","p2-tile-n num", String(x[1])));
+    b.appendChild(el("span","p2-tile-l", x[0]));
+    b.addEventListener("click",x[3]);
+    grid.appendChild(b);
+  });
+  m.appendChild(grid);
+
+  // 4. what is running, or one button to start
+  var ids=runningIds();
+  if(ids.length){
+    ids.forEach(function(id){
+      var th=T(id), r=band("p2-run live", th?th.c:"--hot");
+      r.appendChild(el("span","pulse"));
+      var tt=el("span","p2-run-t"); tt.appendChild(el("b","any",th?th.n:id));
+      tt.appendChild(el("span",null, dur((Date.now()-running[id])/60000)+" so far")); r.appendChild(tt);
+      var st=el("button","pill","Stop"); st.addEventListener("click",function(){ stopFocus(id); }); r.appendChild(st);
+      m.appendChild(r);
+    });
+  } else {
+    var go=el("button","p2-start","▶  Start working on something");
+    go.addEventListener("click",function(){
+      var pick=late.concat(on).concat(pinnedThreads()).filter(function(x,i,a){ return a.indexOf(x)===i; });
+      if(!pick.length) pick=board.threads.slice();
+      listSheet("Start","Pick a thread", pick, function(th){
+        var b=threadRow(th); b.onclick=null;
+        b.addEventListener("click",function(e){ e.stopImmediatePropagation(); closeSheet(); startFocus(th.id); }, true);
+        return b;
+      });
+    });
+    m.appendChild(go);
+  }
+
+  // 5. pinned, as chips
+  var pins=pinnedThreads();
+  if(pins.length){
+    var pc=el("div","p2-chips");
+    pins.forEach(function(th){
+      var b=el("button","p2-chip any",shortName(th)); b.style.setProperty("--a","var("+th.c+")");
+      b.addEventListener("click",function(){ openThread(th); }); pc.appendChild(b);
+    });
+    m.appendChild(pc);
+  }
+}
+
+/* ---------- Projects ---------- */
+function needsMe(){
+  var s=[];
+  function add(t){ if(s.indexOf(t)<0) s.push(t); }
+  board.threads.forEach(function(t){ var b=bucketOf(t); if(b==="overdue"||b==="today") add(t); });
+  board.threads.filter(needsChase).forEach(add);
+  pinnedThreads().forEach(add);
+  runningIds().forEach(function(id){ var t=T(id); if(t) add(t); });
+  return s;
+}
+
+function p2Projects(m){
+  var sel=getRaw("planner.p2dom")||"me";
+  var chips=el("div","p2-filter");
+  var opts=[["me","Needs me", needsMe().length]].concat((board.domains||[]).map(function(d){
+    return [d.id, d.n, threadsIn(d.id).length]; })).concat([["all","All", board.threads.length]]);
+  if(!opts.some(function(o){ return o[0]===sel; })) sel="me";
+  opts.forEach(function(o){
+    if(!o[2] && o[0]!=="me") return;
+    var b=el("button","p2-fchip"+(o[0]===sel?" on":""), o[1]+" "+o[2]);
+    b.addEventListener("click",function(){ putRaw("planner.p2dom",o[0]); render(); });
+    chips.appendChild(b);
+  });
+  m.appendChild(chips);
+
+  var list = sel==="me" ? needsMe() : sel==="all" ? board.threads.slice() : threadsIn(sel);
+  var grid=el("div","p2-grid");
+  list.forEach(function(t){
+    var n=stageCount(t), ix=stageIx(t), unset=isUnset(t);
+    var b=el("button","p2-card"); b.style.setProperty("--a","var("+t.c+")");
+    b.appendChild(ring(unset?0:(n?(ix+1)/n:0), t.c, 40, unset?"?":(n?(ix+1)+"/"+n:""), unset));
+    var tx=el("span","p2-card-t");
+    tx.appendChild(el("b","any",t.n));
+    tx.appendChild(el("span","any", unset?"stage not set":stageName(t)));
+    b.appendChild(tx);
+    var flags=el("span","p2-flags");
+    if(isOn(t.id)) flags.appendChild(el("i","p2-f live","live"));
+    if(bucketOf(t)==="overdue") flags.appendChild(el("i","p2-f late","late"));
+    if(needsChase(t)) flags.appendChild(el("i","p2-f chase","chase"));
+    if(flags.childNodes.length) b.appendChild(flags);
+    b.addEventListener("click",function(){ openThread(t); });
+    grid.appendChild(b);
+  });
+  if(!list.length) m.appendChild(el("p","empty","Nothing needs you right now. Pick a category above."));
+  m.appendChild(grid);
+  var add=el("button","p2-add","+ New thread");
+  add.addEventListener("click",function(){ addSheet(sel!=="me"&&sel!=="all"?sel:null); });
+  m.appendChild(add);
+}
+
+/* ---------- Plan: goals, the week, waits ---------- */
+function p2Plan(m){
+  var gl=(board.goals||[]).filter(function(g){ return g.target; });
+  if(gl.length){
+    var gr=el("div","p2-goals");
+    gl.forEach(function(g){
+      var gs=goalSlots(g), b=el("button","p2-goal");
+      b.appendChild(ring(gs.filled/gs.target, g.c, 64, gs.filled+"/"+gs.target));
+      b.appendChild(el("span","any",g.n));
+      b.addEventListener("click",function(){
+        sheet(function(sh){
+          shHead(sh,"Goal",g.n);
+          gs.tiles.forEach(function(tl){
+            var r=el(tl.t?"button":"div","row");
+            r.appendChild(el("span","dot"+(tl.s==="done"?"":" cold")));
+            r.appendChild(el("span","nm any",tl.label));
+            if(tl.t) r.addEventListener("click",function(){ openThread(tl.t); });
+            sh.appendChild(r);
+          });
+          if(gs.pace) sh.appendChild(el("p","note any",gs.pace));
+        });
+      });
+      gr.appendChild(b);
+    });
+    m.appendChild(gr);
+  }
+
+  var td=new Date().getDay(), cur=curBlock();
+  var dd=el("div","p2-days");
+  DAYS.forEach(function(d,i){
+    var b=el("button","p2-day"+(i===td?" today":"")+(i===selDay?" on":""));
+    b.appendChild(el("span",null,d.slice(0,2)));
+    var bars=el("span","p2-bars");
+    (board.week[i]||[]).forEach(function(x){ if(x[5]>x[4]){ var s=el("i"); s.style.background="var("+x[3]+")"; bars.appendChild(s); } });
+    b.appendChild(bars);
+    b.addEventListener("click",function(){ selDay=i; render(); });
+    dd.appendChild(b);
+  });
+  m.appendChild(dd);
+
+  var dstr=dayStr(selDay), isToday=(selDay===td);
+  var day=el("div","p2-blocks");
+  day.appendChild(el("p","p2-dayname", FULL[selDay]+(isToday?" · today":"")));
+  (board.week[selDay]||[]).forEach(function(x,ix){
+    var marker=x[5]<=x[4], work=!!x[6];
+    var who=planned(dstr,ix), th=who?T(who):null, isNow=isToday&&cur&&cur.i===ix&&!marker;
+    var b=el(marker?"div":"button","p2-blk"+(isNow?" on":"")+((work&&!marker&&!th)?" hole":""));
+    b.style.setProperty("--a","var("+(th?th.c:x[3])+")");
+    b.appendChild(el("span","p2-blk-time num", marker?"·":hm(x[4])));
+    var d=el("span","p2-blk-t");
+    d.appendChild(el("b","any",x[1]));
+    d.appendChild(el("span","any", th?th.n:(work&&!marker?"tap to assign a thread":(x[2]||""))));
+    b.appendChild(d);
+    if(!marker) b.addEventListener("click",function(){ if(work) assignSheet(dstr, ix, x, selDay); else blockSheet(selDay, x); });
+    day.appendChild(b);
+  });
+  var addb=el("button","p2-add","+ Add to "+FULL[selDay]);
+  addb.addEventListener("click",function(){ blockSheet(selDay, null); });
+  day.appendChild(addb);
+  m.appendChild(day);
+
+  var waits=waitList();
+  if(waits.length){
+    var w=el("button","p2-strip p2-wait");
+    w.style.setProperty("--a","var(--hot)");
+    w.appendChild(el("span","p2-dot"));
+    var wt=el("span","p2-strip-t");
+    wt.appendChild(el("b",null,waits.length+" out of your hands"));
+    wt.appendChild(el("span",null,waits.filter(needsChase).length+" need a chase"));
+    w.appendChild(wt);
+    w.addEventListener("click",function(){ listSheet("Waiting","Out of your hands", waits, chaseCard); });
+    m.appendChild(w);
+  }
+}
+
+
 /* ---------- boot ---------- */
 Array.prototype.forEach.call(document.querySelectorAll("nav button"),function(b){
   b.addEventListener("click",function(){ view=b.dataset.v; recHint=""; render(); });
@@ -1632,8 +1903,25 @@ $("theme").addEventListener("click",function(){
 });
 document.addEventListener("keydown",function(e){ if(e.key==="Escape") closeSheet(); });
 
+/* Layout: "simple" (default on the phone since 4 Nov 2026) or "classic". ?layout=classic|simple sets it. */
+function p2Apply(){
+  var q=(location.search.match(/[?&]layout=(simple|classic)/)||[])[1];
+  if(q) putRaw("planner.layout", q);
+  var simple = (getRaw("planner.layout")||"simple")!=="classic";
+  if(!simple){ document.documentElement.removeAttribute("data-layout"); return; }
+  document.documentElement.setAttribute("data-layout","simple");
+  var nav=document.querySelector("nav .in"); if(!nav) return;
+  [["now","◉","Today"],["threads","▦","Projects"],["map","◷","Plan"],["say","＋","Add"],["inbox","✉","Inbox"]].forEach(function(x){
+    var b=nav.querySelector('button[data-v="'+x[0]+'"]'); if(!b) return;
+    b.innerHTML=""; b.appendChild(el("span",null,x[1])); b.appendChild(el("em",null,x[2]));
+    if(x[0]==="now"){ var bd=el("i","p2-badge"); bd.style.display="none"; b.appendChild(bd); }
+    nav.appendChild(b);
+  });
+}
+
 /* ---------- boot ---------- */
 applyTheme();
+p2Apply();
 render();
 checkForUpdate();
 document.addEventListener("visibilitychange",function(){

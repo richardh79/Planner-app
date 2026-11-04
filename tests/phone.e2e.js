@@ -69,7 +69,7 @@ async function newPage(browser, port, gh, extraInit) {
   await ctx.route("https://api.github.com/**", r => gh.handle(r));
   await ctx.addInitScript(() => {
     localStorage.setItem("planner.repo", JSON.stringify("o/r"));
-    localStorage.setItem("planner.token", JSON.stringify("tok"));
+    localStorage.setItem("planner.layout","classic"); localStorage.setItem("planner.token", JSON.stringify("tok"));
     // a fake speech engine that behaves like Android: speaks, then the browser ends the session by itself
     window.__sr = { made: 0, stopped: false, script: [] };
     window.SpeechRecognition = window.webkitSpeechRecognition = function () {

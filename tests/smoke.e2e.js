@@ -70,7 +70,7 @@ async function walk(browser, base, page_, errorProbe, clickables, label) {
     if (p.startsWith("/issues")) return req.method() === "POST" ? json(201, { number: 8 }) : json(200, issues);
     return json(200, []);
   });
-  await ctx.addInitScript(() => { localStorage.setItem("planner.repo", JSON.stringify("o/r")); localStorage.setItem("planner.token", JSON.stringify("tok")); });
+  await ctx.addInitScript(() => { localStorage.setItem("planner.repo", JSON.stringify("o/r")); localStorage.setItem("planner.layout","classic"); localStorage.setItem("planner.token", JSON.stringify("tok")); });
   const page = await ctx.newPage();
   const errs = [];
   page.on("pageerror", e => errs.push("script error: " + e.message));

@@ -35,7 +35,7 @@ function gh(){
     const ctx=await br.newContext({serviceWorkers:"block",viewport:{width:1500,height:900}});
     await ctx.route("https://api.github.com/**",r=>g.handle(r));
     await ctx.addInitScript(()=>{
-      localStorage.setItem("planner.repo",JSON.stringify("o/r"));localStorage.setItem("planner.token",JSON.stringify("tok"));
+      localStorage.setItem("planner.repo",JSON.stringify("o/r"));localStorage.setItem("planner.layout","classic"); localStorage.setItem("planner.token",JSON.stringify("tok"));
       window.__sr={made:0,stopped:false,script:[{text:"send the draft",final:true},{text:"to the editor",final:true},{text:"by Thursday",final:false}]};
       window.SpeechRecognition=window.webkitSpeechRecognition=function(){const me={};const id=++window.__sr.made;
         me.start=function(){const part=window.__sr.script[id-1];
