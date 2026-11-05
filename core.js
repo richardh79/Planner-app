@@ -18,7 +18,7 @@ var K = { tok:"planner.token", repo:"planner.repo", board:"planner.board", focus
 /* Which page this is. Both pages share this file, and the commit message of every write names the device. */
 var WHERE = /desktop\.html/i.test(location.pathname) ? "desktop" : "phone";
 
-var BUILD = "2026-11-04.2";   // bumped on every publish, checked against version.json
+var BUILD = "2026-11-05.1";   // bumped on every publish, checked against version.json
 function REPO(){ return getRaw(K.repo) || ""; }
 function API(){ return "https://api.github.com/repos/" + REPO(); }
 
@@ -308,12 +308,18 @@ function pullAnswers(){
    project once, with one tap, in desktop/links.jsonl; every session from that
    folder, past and future, then counts toward that project. */
 var deskMins={}, deskWeek={min:0, n:0, tok:0, proj:{}}, deskRaw=[], links={}, unlinked=[];
+/* The PC's project portfolio (desktop/portfolio.json, written by the runner from the project
+   manager): health, phase, next step and the Claude app link per project. Already filtered on the PC. */
+var pcPort={at:null, projects:[], signoffs:[]};
+function pcOf(threadId){ for(var i=0;i<pcPort.projects.length;i++) if(pcPort.projects[i].thread===threadId) return pcPort.projects[i]; return null; }
 
 function pullDesk(){
   return Promise.all([
     gh("/contents/desktop/sessions.jsonl",{soft404:true}),
-    gh("/contents/desktop/links.jsonl",{soft404:true})
+    gh("/contents/desktop/links.jsonl",{soft404:true}),
+    gh("/contents/desktop/portfolio.json",{soft404:true})
   ]).then(function(rs){
+    try{ var pp=rs[2]&&rs[2].content ? JSON.parse(b64d(rs[2].content)) : null; if(pp && pp.projects) pcPort=pp; }catch(e){}
     deskRaw=readLines(rs[0]);
     links={}; readLines(rs[1]).forEach(function(l){ if(l.folder) links[String(l.folder).toLowerCase()]={thread:l.thread||null}; });
     deskCompute();

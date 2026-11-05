@@ -1303,6 +1303,7 @@ function openThread(t){
     sp.addEventListener("click",function(){ closeSheet(); sayThread=t.id; view="say"; render(); });
     bts.appendChild(go); bts.appendChild(sp); c.appendChild(bts);
     sh.appendChild(c);
+    var pcp=pcOf(t.id); if(pcp) sh.appendChild(pcBlock(pcp, false));
 
     var s=el("div","sec"); s.appendChild(sech("The path","tap a stone"));
     var box=band("flat");
@@ -1778,7 +1779,7 @@ function needsMe(){
 function p2Projects(m){
   var sel=getRaw("planner.p2dom")||"me";
   var chips=el("div","p2-filter");
-  var opts=[["me","Needs me", needsMe().length]].concat((board.domains||[]).map(function(d){
+  var opts=[["me","Needs me", needsMe().length]].concat(pcPort.projects.length?[["pc","On PC", pcPort.projects.length]]:[]).concat((board.domains||[]).map(function(d){
     return [d.id, d.n, threadsIn(d.id).length]; })).concat([["all","All", board.threads.length]]);
   if(!opts.some(function(o){ return o[0]===sel; })) sel="me";
   opts.forEach(function(o){
@@ -1789,6 +1790,7 @@ function p2Projects(m){
   });
   m.appendChild(chips);
 
+  if(sel==="pc"){ m.appendChild(pcGrid()); return; }
   var list = sel==="me" ? needsMe() : sel==="all" ? board.threads.slice() : threadsIn(sel);
   var grid=el("div","p2-grid");
   list.forEach(function(t){
@@ -1812,6 +1814,63 @@ function p2Projects(m){
   var add=el("button","p2-add","+ New thread");
   add.addEventListener("click",function(){ addSheet(sel!=="me"&&sel!=="all"?sel:null); });
   m.appendChild(add);
+}
+
+/* ---------- On PC: the project manager's portfolio, one tap into Claude ---------- */
+var PC_COL={red:"--bad", amber:"--hot", green:"--good"};
+function pcCol(p){ return PC_COL[p.health]||"--dim"; }
+function pcHealth(p){ return {red:"Problem", amber:"Needs attention", green:"On track"}[p.health]||"Not managed"; }
+function pcDate(d){ if(!d) return ""; var x=new Date(d+"T12:00:00"); return isNaN(x)?d:x.toLocaleDateString("en-GB",{day:"numeric",month:"short"}); }
+function pcGrid(){
+  var w=el("div");
+  if(pcPort.at) w.appendChild(el("p","note any","From the PC, "+ago(pcPort.at)+". Tap a project; Open in Claude starts a session in its folder."));
+  var grid=el("div","p2-grid");
+  pcPort.projects.forEach(function(p){
+    var b=el("button","p2-card"); b.style.setProperty("--a","var("+pcCol(p)+")");
+    b.appendChild(ring(p.progress!=null?p.progress/100:0, pcCol(p), 40, p.progress!=null?Math.round(p.progress)+"%":"", p.progress==null));
+    var tx=el("span","p2-card-t");
+    tx.appendChild(el("b","any",p.name));
+    tx.appendChild(el("span","any", p.phase||pcHealth(p)));
+    b.appendChild(tx);
+    var flags=el("span","p2-flags");
+    if(p.health==="red") flags.appendChild(el("i","p2-f late","problem"));
+    if(p.for_author) flags.appendChild(el("i","p2-f chase","you "+p.for_author));
+    if(flags.childNodes.length) b.appendChild(flags);
+    b.addEventListener("click",function(){ pcSheet(p); });
+    grid.appendChild(b);
+  });
+  w.appendChild(grid);
+  return w;
+}
+function pcBlock(p, withThread){
+  var c=band("", pcCol(p));
+  var f=el("div","thf"); f.style.marginTop="0";
+  f.appendChild(el("span",null,"On the PC: "+pcHealth(p)));
+  if(p.progress!=null) f.appendChild(el("em","num", Math.round(p.progress)+"% done"));
+  c.appendChild(f);
+  var facts=[];
+  if(p.phase) facts.push("Stage: "+p.phase);
+  if(p.next) facts.push("Next: "+p.next);
+  (p.why||[]).forEach(function(x){ facts.push("Why: "+x); });
+  if(p.risks) facts.push(p.risks+" high risk"+(p.risks>1?"s":"")+" open");
+  if(p.for_author) facts.push(p.for_author+" step"+(p.for_author>1?"s":"")+" waiting for you");
+  if(p.blocked) facts.push(p.blocked+" blocked");
+  if(p.p85) facts.push("Likely done by "+pcDate(p.p85)+" (85% sure)");
+  if(p.due) facts.push("Due "+pcDate(p.due));
+  facts.forEach(function(x){ c.appendChild(el("p","note any",x)); });
+  var bts=el("div","thb");
+  if(p.claude){
+    var a=el("a","go","Open in Claude"); a.href=p.claude; a.target="_blank"; a.rel="noopener";
+    a.style.textAlign="center"; a.style.textDecoration="none"; bts.appendChild(a);
+  }
+  var tt=withThread && p.thread ? T(p.thread) : null;
+  if(tt){ var tb=el("button",null,"Planner path"); tb.addEventListener("click",function(){ openThread(tt); }); bts.appendChild(tb); }
+  if(bts.childNodes.length) c.appendChild(bts);
+  if(!p.claude) c.appendChild(el("p","note any","Not reachable from the phone yet: add it to phone-projects on the PC."));
+  return c;
+}
+function pcSheet(p){
+  sheet(function(sh){ shHead(sh, "On the PC", p.name); sh.appendChild(pcBlock(p, true)); });
 }
 
 /* ---------- Plan: goals, the week, waits ---------- */
