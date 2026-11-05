@@ -1690,6 +1690,7 @@ function p2Today(m){
   strip.appendChild(tx);
   strip.addEventListener("click",function(){ view="map"; render(); });
   m.appendChild(strip);
+  if(pcPort.projects.length) m.appendChild(pfButton());
 
   // 2. the one thing that needs him
   var so=signoffs();
@@ -1777,6 +1778,7 @@ function needsMe(){
 }
 
 function p2Projects(m){
+  if(pcPort.projects.length) m.appendChild(pfButton());
   var sel=getRaw("planner.p2dom")||"me";
   var chips=el("div","p2-filter");
   var opts=[["me","Needs me", needsMe().length]].concat(pcPort.projects.length?[["pc","On PC", pcPort.projects.length]]:[]).concat((board.domains||[]).map(function(d){
@@ -1871,6 +1873,138 @@ function pcBlock(p, withThread){
 }
 function pcSheet(p){
   sheet(function(sh){ shHead(sh, "On the PC", p.name); sh.appendChild(pcBlock(p, true)); });
+}
+
+/* ---------- Portfolio: every project on one page, as the sessions last reported it ----------
+   Order is fixed so the page reads the same every time: decisions for him, then problems,
+   then needs attention, then on track. One card per project; tap for the full detail. */
+function pfName(id){ for(var i=0;i<pcPort.projects.length;i++) if(pcPort.projects[i].id===id) return pcPort.projects[i].name; return ""; }
+function pfRows(){
+  return pcPort.projects.filter(function(p){ return p.health; });
+}
+function pfCount(){
+  var r=pfRows(), n={red:0, amber:0, green:0};
+  r.forEach(function(p){ if(n[p.health]!=null) n[p.health]++; });
+  return {rows:r.length, red:n.red, amber:n.amber, green:n.green, ask:(pcLive.decisions||[]).length};
+}
+function pfWhen(){
+  var t=pcLive.checked||pcLive.at;
+  return t ? "Sessions checked "+ago(t) : (pcPort.at ? "From the project files, "+ago(pcPort.at) : "No report yet");
+}
+function pfButton(){
+  var c=pfCount(), b=el("button","pf-btn");
+  b.style.setProperty("--a", c.red?"var(--bad)":c.amber?"var(--hot)":"var(--good)");
+  var t=el("span","pf-btn-t");
+  t.appendChild(el("b",null,"Portfolio"));
+  var parts=[];
+  if(c.ask) parts.push(c.ask+" decision"+(c.ask>1?"s":"")+" for you");
+  if(c.red) parts.push(c.red+" problem"+(c.red>1?"s":""));
+  parts.push(c.rows+" projects");
+  t.appendChild(el("span",null, parts.join(" · ")));
+  t.appendChild(el("em",null, pfWhen()));
+  b.appendChild(t);
+  var dots=el("span","pf-dots");
+  ["red","amber","green"].forEach(function(h){ for(var i=0;i<c[h];i++) dots.appendChild(el("i","pf-d "+h)); });
+  b.appendChild(dots);
+  b.addEventListener("click", pfSheet);
+  return b;
+}
+function pfLine(parent, label, text, cls){
+  if(!text) return;
+  var p=el("p","pf-l"+(cls?" "+cls:""));
+  p.appendChild(el("b",null,label+" "));
+  p.appendChild(document.createTextNode(text));
+  parent.appendChild(p);
+}
+function pfCard(p){
+  var lv=liveOf(p.id)||{};
+  var c=el("button","pf-card"); c.style.setProperty("--a","var("+pcCol(p)+")");
+  var top=el("div","pf-top");
+  top.appendChild(ring(p.progress!=null?p.progress/100:0, pcCol(p), 44, p.progress!=null?Math.round(p.progress)+"%":"", p.progress==null));
+  var tt=el("div","pf-tt");
+  tt.appendChild(el("b","any",p.name));
+  var sub=pcHealth(p)+(lv.source==="live"?" · live":" · from file");
+  if(p.due) sub+=" · due "+pcDate(p.due);
+  tt.appendChild(el("span",null,sub));
+  top.appendChild(tt);
+  c.appendChild(top);
+  if(lv.pct) pfLine(c,"Session says:", lv.pct);
+  pfLine(c,"Now:", lv.now || (p.next ? "next is "+p.next : ""));
+  if(lv.blocker) pfLine(c,"Blocker:", lv.blocker, "bad");
+  else if(p.why && p.why[0]) pfLine(c,"Flagged:", p.why[0], "hot");
+  if(lv.flag) pfLine(c,"⚠", lv.flag, "hot");
+  if(lv.you && lv.you.length) pfLine(c,"You:", lv.you.length+" task"+(lv.you.length>1?"s":"")+" ("+lv.you[0]+(lv.you.length>1?", …":"")+")");
+  c.addEventListener("click", function(){ pfDetail(p); });
+  return c;
+}
+function pfDetail(p){
+  var lv=liveOf(p.id)||{};
+  sheet(function(sh){
+    shHead(sh, pcHealth(p)+(lv.source==="live"?" · reported by its session":" · from the project file"), p.name);
+    var c=band("pf-detail", pcCol(p));
+    var f=el("div","thf"); f.style.marginTop="0";
+    f.appendChild(el("span",null, p.phase||""));
+    if(p.progress!=null) f.appendChild(el("em","num", Math.round(p.progress)+"% done"));
+    c.appendChild(f);
+    if(lv.pct) pfLine(c,"Honest progress:", lv.pct);
+    pfLine(c,"Doing now:", lv.now);
+    pfLine(c,"Done since yesterday:", lv.done);
+    pfLine(c,"Blocker:", lv.blocker, "bad");
+    pfLine(c,"Flagged:", (p.why||[]).join("; "), "hot");
+    if(lv.flag) pfLine(c,"⚠", lv.flag, "hot");
+    pfLine(c,"Next:", lv.next || p.next);
+    pfLine(c,"Finish:", lv.eta || (p.p85 ? "likely by "+pcDate(p.p85)+" (85% sure)" : ""));
+    if(p.due) pfLine(c,"Due:", pcDate(p.due));
+    if(lv.session) pfLine(c,"Session:", lv.session);
+    sh.appendChild(c);
+    if(lv.you && lv.you.length){
+      var s=el("div","sec"); s.appendChild(sech("Only you can do these"));
+      lv.you.forEach(function(x){ var r=el("div","row"); r.appendChild(el("span","dot cold")); r.appendChild(el("span","nm any",x)); s.appendChild(r); });
+      sh.appendChild(s);
+    }
+    var asks=(pcLive.decisions||[]).filter(function(d){ return d.id===p.id; });
+    if(asks.length){
+      var s2=el("div","sec"); s2.appendChild(sech("Decision for you"));
+      asks.forEach(function(d){ s2.appendChild(el("p","pf-ask any", d.ask)); });
+      sh.appendChild(s2);
+    }
+    sh.appendChild(pcBlock(p, true));
+  });
+}
+function pfSheet(){
+  sheet(function(sh){
+    shHead(sh, pfWhen(), "Portfolio");
+    var c=pfCount();
+    var sum=el("div","pf-sum");
+    [["Problem",c.red,"--bad"],["Attention",c.amber,"--hot"],["On track",c.green,"--good"],["For you",c.ask,"--accent"]].forEach(function(x){
+      var t=el("div","pf-sumc"); t.style.setProperty("--a","var("+x[2]+")");
+      t.appendChild(el("b","num",String(x[1]))); t.appendChild(el("span",null,x[0])); sum.appendChild(t);
+    });
+    sh.appendChild(sum);
+    var ds=pcLive.decisions||[];
+    if(ds.length){
+      var s=el("div","sec"); s.appendChild(sech("Decisions for you"));
+      ds.forEach(function(d,i){
+        var r=el("div","pf-dec");
+        r.appendChild(el("span","pf-n num",String(i+1)));
+        var tx=el("div"); if(d.id) tx.appendChild(el("b","any",pfName(d.id)));
+        tx.appendChild(el("p","any",d.ask)); r.appendChild(tx);
+        s.appendChild(r);
+      });
+      s.appendChild(el("p","note","Reply to these in chat."));
+      sh.appendChild(s);
+    }
+    [["red","Problems"],["amber","Needs attention"],["green","On track"]].forEach(function(g){
+      var list=pfRows().filter(function(p){ return p.health===g[0]; });
+      if(!list.length) return;
+      var s=el("div","sec"); s.appendChild(sech(g[1]+" · "+list.length));
+      list.forEach(function(p){ s.appendChild(pfCard(p)); });
+      sh.appendChild(s);
+    });
+    if(!pfRows().length) sh.appendChild(el("p","empty","No portfolio from the PC yet."));
+    if((pcLive.unreached||[]).length) sh.appendChild(el("p","note any","Not reached this round: "+pcLive.unreached.join(", ")+"."));
+    sh.appendChild(el("p","note","\"Live\" means the project's own session answered in that round. \"From file\" is the project plan, and can be a day old."));
+  });
 }
 
 /* ---------- Plan: goals, the week, waits ---------- */
@@ -1986,6 +2120,19 @@ checkForUpdate();
 document.addEventListener("visibilitychange",function(){
   if(document.visibilityState==="visible") checkForUpdate();
 });
+/* The portfolio changes on the PC during the day: fetch it again every 5 minutes while the app is open. */
+setInterval(function(){
+  if(!token || document.visibilityState!=="visible") return;
+  pullDesk().then(function(){
+    /* Same guard as the 30-second redraw: never while a sheet is open, a field is in use, or dictation runs. */
+    if($("sheet").innerHTML || live) return;
+    if(view!=="now" && view!=="threads") return;
+    var a=document.activeElement, mn=$("main");
+    if(a && mn && mn.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return;
+    var ta=mn && mn.querySelector("textarea"); if(ta && ta.value) return;
+    render();
+  });
+}, 300000);
 setInterval(function(){
   if(view!=="now" && view!=="threads") return;
   /* A redraw wipes the fields on the page. Never do it while something is being typed. */
