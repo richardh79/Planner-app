@@ -1,6 +1,10 @@
 <!doctype html>
 <html lang="en">
 <head>
+<script>/* Brief is the front page from 8 Nov; the classic app stays reachable for one week. */
+try{ if(/[?&]classic/.test(location.search)) sessionStorage.setItem("classic","1");
+  if(!location.hash && !sessionStorage.getItem("classic")) location.replace("brief.html"); }catch(e){}</script>
+
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#FBFAF8">
@@ -437,7 +441,7 @@ input[type=time]{width:100%;min-height:52px;padding:12px 14px;border-radius:14px
 <link rel="stylesheet" href="orbit.css?v=8">
 <script src="orbit.js?v=5"></script>
 <script src="sessions.js?v=4"></script>
-<script src="core.js?v=5"></script>
+<script src="core.js?v=6"></script>
 <script src="app.js?v=31"></script>
 <link rel="stylesheet" href="phone2.css?v=3">
 </body>

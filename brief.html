@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<title>Brief</title>
+<style>
+:root{--bg:#0b1220;--card:#121b2e;--line:#1f2b45;--ink:#e8eefc;--dim:#8a98b8;--cyan:#38d6ff;
+  --green:#2fd38a;--amber:#ffb547;--red:#ff5c6c;--grey:#5a6886}
+*{box-sizing:border-box;margin:0}
+body{background:radial-gradient(circle at 50% -10%,#16264a 0,var(--bg) 60%);color:var(--ink);
+  font:16px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;min-height:100vh;
+  padding:max(14px,env(safe-area-inset-top)) 14px 40px}
+header{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+.core{width:74px;height:74px;border-radius:50%;flex:none;display:grid;place-items:center;
+  border:2px solid var(--cyan);box-shadow:0 0 18px #38d6ff55,inset 0 0 18px #38d6ff33;font-weight:700;font-size:26px}
+.core.calm{border-color:var(--green);box-shadow:0 0 18px #2fd38a44,inset 0 0 18px #2fd38a22}
+.core.alert{animation:pulse 2s infinite}
+@keyframes pulse{50%{box-shadow:0 0 30px #38d6ffaa,inset 0 0 22px #38d6ff55}}
+h1{font-size:20px;font-weight:650}
+.sub{color:var(--dim);font-size:13px}
+button{font:inherit;color:inherit;border:0;cursor:pointer}
+.speak{margin-left:auto;white-space:nowrap;background:#38d6ff1a;border:1px solid #38d6ff66;border-radius:22px;padding:9px 14px;font-size:14px}
+h2{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin:20px 2px 8px}
+.need{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--cyan);border-radius:14px;padding:12px 14px;margin-bottom:10px}
+.need.signoff{border-left-color:var(--amber)}
+.need.info{border-left-color:var(--grey)}
+.need .p{font-size:12px;color:var(--cyan);font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+.need .t{margin:4px 0 10px;overflow-wrap:anywhere}
+.opts{display:flex;gap:8px;flex-wrap:wrap}
+.opts button{background:#1d2a47;border:1px solid #2c3b60;border-radius:10px;padding:9px 14px;min-width:84px}
+.opts button.rec{background:#38d6ff26;border-color:var(--cyan)}
+.opts button.rec::after{content:" ★";color:var(--cyan)}
+.none{color:var(--dim);padding:6px 2px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;position:relative;text-align:left;width:100%}
+.tile .top{display:flex;align-items:center;gap:10px}
+.ring{width:44px;height:44px;flex:none}
+.ring text{font-size:11px;fill:var(--ink);font-weight:600}
+.tile .n{font-weight:650;font-size:15px;line-height:1.2}
+.tile .nx{color:var(--dim);font-size:12.5px;margin-top:8px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tile .st{font-size:11px;color:var(--dim);margin-top:6px;display:flex;align-items:center;gap:5px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--grey)}
+.dot.working{background:var(--green);animation:blink 1.2s infinite}
+.dot.waiting,.dot.silent{background:var(--amber)}
+.dot.blocked{background:var(--red)}
+@keyframes blink{50%{opacity:.25}}
+.up{position:absolute;top:8px;right:10px;font-size:11px;color:var(--green);font-weight:700}
+.you{margin-top:8px;border-top:1px dashed var(--line);padding-top:8px;display:none}
+.tile.open .you{display:block}
+.you div{display:flex;gap:8px;align-items:center;font-size:13px;margin:6px 0}
+.you button{margin-left:auto;background:#1d2a47;border:1px solid #2c3b60;border-radius:8px;padding:5px 10px;font-size:12px}
+.badge{display:inline-block;background:var(--amber);color:#000;border-radius:9px;font-size:11px;font-weight:700;padding:0 6px;margin-left:4px}
+footer{margin-top:26px;color:var(--dim);font-size:12px;display:flex;justify-content:space-between}
+footer a{color:var(--dim)}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#1d2a47;border:1px solid var(--cyan);border-radius:12px;padding:10px 16px;display:none}
+</style>
+</head>
+<body>
+<header>
+  <div class="core" id="core">–</div>
+  <div><h1 id="head">Brief</h1><div class="sub" id="sub">Loading…</div></div>
+  <button class="speak" id="speak" aria-label="Read the brief aloud">🔊 Brief me</button>
+</header>
+
+<h2>Needs you</h2>
+<div id="needs"></div>
+
+<h2>Projects</h2>
+<div class="grid" id="tiles"></div>
+
+<footer><span id="at"></span><a href="index.html?classic">Classic app</a></footer>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+var TOK = ls("planner.token"), REPO = ls("planner.repo");
+var COL = {green:"#2fd38a", amber:"#ffb547", red:"#ff5c6c", grey:"#5a6886"};
+var WORD = {working:"working", waiting:"waiting for you on the PC", silent:"quiet for a while", blocked:"stopped with an error", idle:"idle", off:"no session"};
+var brief = null;
+var answered = jget("brief.answered", {});    // q -> time; hides a card until the PC confirms
+var seen = jget("brief.seen", {});            // tile id -> pct when he last looked
+
+function ls(k){ try{ return localStorage.getItem(k) || ""; }catch(e){ return ""; } }
+function jget(k,d){ try{ var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } }
+function jput(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+function b64d(s){ return decodeURIComponent(Array.prototype.map.call(atob(String(s).replace(/\s/g,"")), function(c){
+  return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2); }).join("")); }
+function b64e(s){ return btoa(unescape(encodeURIComponent(s))); }
+function esc(s){ return String(s == null ? "" : s).replace(/[&<>"]/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]; }); }
+function clip(s){ s = String(s || "").replace(/\(sha256 [0-9a-f]+.*$/i, "").trim(); return s.length >= 148 ? s.replace(/\s+\S*$/, "") + "…" : s; }
+function el(id){ return document.getElementById(id); }
+function toast(m){ var t = el("toast"); t.textContent = m; t.style.display = "block"; setTimeout(function(){ t.style.display = "none"; }, 2600); }
+function ago(iso){
+  if(!iso) return "";
+  var m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  return m < 10 ? "just now" : m < 60 ? m + " min ago" : m < 1440 ? Math.round(m / 60) + " h ago" : Math.round(m / 1440) + " d ago";
+}
+
+function gh(path, opt){
+  opt = opt || {};
+  var h = {"Accept":"application/vnd.github+json", "Authorization":"Bearer " + TOK, "X-GitHub-Api-Version":"2022-11-28"};
+  if(opt.body) h["Content-Type"] = "application/json";
+  return fetch("https://api.github.com/repos/" + REPO + path, {method:opt.method || "GET", headers:h, cache:"no-store",
+    body:opt.body ? JSON.stringify(opt.body) : undefined}).then(function(r){
+      if(r.status === 404 && opt.soft) return null;
+      if(!r.ok){ var e = new Error("HTTP " + r.status); e.status = r.status; throw e; }
+      return r.json();
+    });
+}
+
+function load(){
+  if(!TOK || !REPO){ el("sub").textContent = "Not connected. Open the classic app once and add the token."; return; }
+  gh("/contents/desktop/brief.json", {soft:true}).then(function(r){
+    if(!r || !r.content){ el("sub").textContent = "The PC has not sent a brief yet."; return; }
+    brief = JSON.parse(b64d(r.content));
+    jput("brief.cache", brief);
+    draw();
+  }).catch(function(e){ el("sub").textContent = "Could not reach the PC data (" + e.message + ")."; });
+}
+
+function liveNeeds(){
+  // a card answered here stays hidden until the PC drops it, then the memory is cleared
+  var qs = {}; (brief.needs || []).forEach(function(n){ qs[n.q] = 1; });
+  (brief.tiles || []).forEach(function(t){ (t.you || []).forEach(function(y){ qs[y.q] = 1; }); });
+  Object.keys(answered).forEach(function(q){ if(!qs[q]) delete answered[q]; });
+  jput("brief.answered", answered);
+  return (brief.needs || []).filter(function(n){ return !answered[n.q]; });
+}
+
+function ring(p, flag){
+  var r = 18, c = 2 * Math.PI * r, v = p == null ? 0 : Math.max(0, Math.min(100, p));
+  return '<svg class="ring" viewBox="0 0 44 44"><circle cx="22" cy="22" r="' + r + '" fill="none" stroke="#1f2b45" stroke-width="5"/>' +
+    '<circle cx="22" cy="22" r="' + r + '" fill="none" stroke="' + (COL[flag] || COL.grey) + '" stroke-width="5" stroke-linecap="round"' +
+    ' stroke-dasharray="' + (c * v / 100).toFixed(1) + ' ' + c.toFixed(1) + '" transform="rotate(-90 22 22)"/>' +
+    '<text x="22" y="26" text-anchor="middle">' + (p == null ? "–" : v + "%") + '</text></svg>';
+}
+
+function draw(){
+  var needs = liveNeeds(), tiles = brief.tiles || [];
+  var core = el("core"), dec = needs.filter(function(n){ return n.kind !== "info"; }).length;
+  core.textContent = dec || "✓";
+  core.className = "core " + (dec ? "alert" : "calm");
+  var working = tiles.filter(function(t){ return t.state === "working"; }).length;
+  el("head").textContent = dec ? dec + (dec === 1 ? " decision waits" : " decisions wait") : "Nothing needs you";
+  el("sub").textContent = working + " working · " + tiles.length + " projects";
+  el("at").textContent = "PC update " + ago(brief.at);
+
+  el("needs").innerHTML = needs.length ? needs.map(function(n){
+    return '<div class="need ' + esc(n.kind) + '"><div class="p">' + esc(n.project) + (n.kind === "signoff" ? " · sign-off" : "") + '</div>' +
+      '<div class="t">' + esc(clip(n.text)) + '</div><div class="opts">' + (n.options || []).map(function(o){
+        return '<button data-q="' + esc(n.q) + '" data-a="' + esc(o) + '" class="' + (n.rec && o === n.rec ? "rec" : "") + '">' + esc(o) + '</button>';
+      }).join("") + '</div></div>';
+  }).join("") : '<div class="none">All clear. Projects are moving on their own.</div>';
+
+  el("tiles").innerHTML = tiles.map(function(t){
+    var you = (t.you || []).filter(function(y){ return !answered[y.q]; });
+    var up = seen[t.id] != null && t.pct != null && t.pct > seen[t.id] ? '<span class="up">▲' + (t.pct - seen[t.id]) + '</span>' : "";
+    return '<div class="tile" data-id="' + esc(t.id) + '">' + up + '<div class="top">' + ring(t.pct, t.flag) +
+      '<div class="n">' + esc(t.name) + (you.length ? '<span class="badge">' + you.length + '</span>' : "") + '</div></div>' +
+      '<div class="nx">' + esc(t.next) + '</div>' +
+      '<div class="st"><span class="dot ' + esc(t.state) + '"></span>' + esc(WORD[t.state] || t.state) + (t.heard ? " · " + ago(t.heard) : "") + '</div>' +
+      (you.length ? '<div class="you">' + you.map(function(y){
+        return '<div><span>' + esc(y.text) + '</span><button data-q="' + esc(y.q) + '" data-a="Done">Done</button></div>'; }).join("") + '</div>' : "") +
+      '</div>';
+  }).join("");
+}
+
+function answer(q, a, btn){
+  var line = JSON.stringify({q:q, a:a, at:new Date().toISOString(), via:"brief"});
+  btn.disabled = true;
+  var put = function(tries){
+    return gh("/contents/data/answers.jsonl", {soft:true}).then(function(r){
+      var body = r && r.content ? b64d(r.content) : "";
+      if(body && body.slice(-1) !== "\n") body += "\n";
+      var b = {message:"Answer " + q, content:b64e(body + line + "\n")};
+      if(r && r.sha) b.sha = r.sha;
+      return gh("/contents/data/answers.jsonl", {method:"PUT", body:b});
+    }).catch(function(e){ if(e.status === 409 && tries) return put(tries - 1); throw e; });
+  };
+  put(2).then(function(){
+    answered[q] = Date.now(); jput("brief.answered", answered); draw();
+    toast(a === "Done" ? "Marked done." : "Sent: " + a + ". The PC records it within a minute.");
+  }).catch(function(e){ btn.disabled = false; toast("Not sent (" + e.message + "). Try again."); });
+}
+
+document.addEventListener("click", function(ev){
+  var b = ev.target.closest("button[data-q]");
+  if(b){ ev.stopPropagation(); answer(b.dataset.q, b.dataset.a, b); return; }
+  var t = ev.target.closest(".tile");
+  if(t) t.classList.toggle("open");
+});
+
+el("speak").onclick = function(){
+  if(!brief || !window.speechSynthesis) return;
+  var needs = liveNeeds(), tiles = brief.tiles || [], s = [];
+  s.push(needs.length ? needs.length + (needs.length === 1 ? " item needs you." : " items need you.") : "Nothing needs you.");
+  needs.slice(0, 4).forEach(function(n){ s.push(n.project + ": " + n.text + "."); });
+  var work = tiles.filter(function(t){ return t.state === "working"; }).map(function(t){ return t.name; });
+  if(work.length) s.push("Working now: " + work.join(", ") + ".");
+  var moved = tiles.filter(function(t){ return seen[t.id] != null && t.pct > seen[t.id]; });
+  moved.forEach(function(t){ s.push(t.name + " moved to " + t.pct + " percent."); });
+  var bad = tiles.filter(function(t){ return t.flag === "red"; }).map(function(t){ return t.name; });
+  if(bad.length) s.push("Problems: " + bad.join(", ") + ".");
+  speechSynthesis.cancel();
+  var u = new SpeechSynthesisUtterance(s.join(" ")); u.rate = 1.02; speechSynthesis.speak(u);
+};
+
+// "moved since last view": remember the percentages he has seen when he leaves the page
+document.addEventListener("visibilitychange", function(){
+  if(document.hidden && brief){ (brief.tiles || []).forEach(function(t){ if(t.pct != null) seen[t.id] = t.pct; }); jput("brief.seen", seen); }
+  else load();
+});
+
+brief = jget("brief.cache", null);
+if(brief) draw();
+load();
+setInterval(function(){ if(!document.hidden) load(); }, 60000);
+</script>
+</body>
+</html>
