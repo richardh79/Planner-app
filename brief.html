@@ -77,7 +77,7 @@ footer a{color:var(--dim)}
 
 <script>
 "use strict";
-var TOK = ls("planner.token"), REPO = ls("planner.repo");
+var TOK = jget("planner.token", "") || "", REPO = ls("planner.repo");   // the classic app stores the token JSON-encoded
 var COL = {green:"#2fd38a", amber:"#ffb547", red:"#ff5c6c", grey:"#5a6886"};
 var WORD = {working:"working", waiting:"waiting for you on the PC", silent:"quiet for a while", blocked:"stopped with an error", idle:"idle", off:"no session"};
 var brief = null;
