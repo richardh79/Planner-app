@@ -1,6 +1,9 @@
 <!doctype html>
 <html lang="en">
 <head>
+<script>/* From 13 Nov the app is planner.html; the classic pages stay reachable with ?classic until 20 Nov. */
+try{ if(/[?&]classic/.test(location.search)) sessionStorage.setItem("classic","1");
+  if(!location.hash && !sessionStorage.getItem("classic")) location.replace("planner.html#today"); }catch(e){}</script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0b1220">

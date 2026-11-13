@@ -98,13 +98,13 @@ async function walk(browser, base, page_, errorProbe, clickables, label) {
   await new Promise(r => server.listen(0, r)); const base = "http://127.0.0.1:" + server.address().port + "/";
   const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
   const phoneProbe = () => { const e = document.querySelector("main .note.bad"); return e && /Could not draw/.test(e.textContent) ? e.textContent : ""; };
-  await walk(browser, base, "index.html", phoneProbe, {
+  await walk(browser, base, "index.html?classic", phoneProbe, {
     views: ["now", "map", "threads", "say", "inbox"].map(v => ({ name: v, sel: 'nav button[data-v="' + v + '"]' })),
     poke: "main .band, main button, main .todo, main .row", limit: 14
   }, "phone");
   const deskProbe = () => { const e = document.getElementById("stateTxt"); return e && /Render failed/.test(e.textContent) ? e.textContent : ""; };
   const rail = ["One look", "Today", "The week", "Weekly review", "Messages", "The map", "Questions", "Files"];
-  await walk(browser, base, "desktop.html", deskProbe, {
+  await walk(browser, base, "desktop.html?classic", deskProbe, {
     views: rail.map(t => ({ name: t, sel: "text=" + t })),
     poke: "#list button, #list .item, #list .row, #detail button", limit: 12
   }, "desktop");

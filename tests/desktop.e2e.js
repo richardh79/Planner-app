@@ -47,7 +47,7 @@ function gh(){
     return page;
   }
   // 1. dictation restart on the desktop
-  { const g=gh(); const page=await open(g); await page.goto(base+"desktop.html"); await sleep(1200);
+  { const g=gh(); const page=await open(g); await page.goto(base+"desktop.html?classic"); await sleep(1200);
     await page.click("text=Research"); await sleep(400); await page.click("text=Test thread"); await sleep(500);
     const ta=await page.$("textarea"); check("desktop: thread detail has a dictation box", !!ta);
     await page.click("button.mic"); await sleep(1400);
@@ -60,7 +60,7 @@ function gh(){
     check("desktop: no repair loop", page._navs()===1, "navigations "+page._navs());
     await page.context().close(); }
   // 2. "Delay or drop" writes a day, not only an issue
-  { const g=gh(); const page=await open(g); await page.goto(base+"desktop.html"); await sleep(1200);
+  { const g=gh(); const page=await open(g); await page.goto(base+"desktop.html?classic"); await sleep(1200);
     await page.click("text=Weekly review"); await sleep(600);
     const btn=await page.$("text=Delay or drop"); check("desktop: the drifting list offers Delay or drop", !!btn);
     if(btn){ await btn.click(); await sleep(400);
@@ -70,7 +70,7 @@ function gh(){
       check("desktop: and still files the reason as a Decision issue", g.posts.some(x=>/^Decision: Test thread/.test(x.title)), JSON.stringify(g.posts.map(x=>x.title))); }
     await page.context().close(); }
   // 3. a Saturday-review summary is sent when the page is hidden, not lost
-  { const g=gh(); const page=await open(g); await page.goto(base+"desktop.html"); await sleep(1200);
+  { const g=gh(); const page=await open(g); await page.goto(base+"desktop.html?classic"); await sleep(1200);
     await page.click("text=Weekly review"); await sleep(600);
     const start=await page.$("button:has-text('Start')"); 
     if(start){ await start.click(); await sleep(500);

@@ -36,7 +36,7 @@ function check(files, label) {
 }
 
 let fail = 0;
-for (const page of ["index.html", "desktop.html"]) {
+for (const page of ["index.html", "desktop.html", "planner.html"]) {
   const html = fs.readFileSync(path.join(ROOT, page), "utf8");
   const scripts = [...html.matchAll(/<script src="([^"?]+)(?:\?[^"]*)?"><\/script>/g)].map(m => m[1]);
   if (!scripts.length) { console.log("FAIL " + page + ": no scripts found"); fail++; continue; }

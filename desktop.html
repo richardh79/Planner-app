@@ -1,6 +1,9 @@
 <!doctype html>
 <html lang="en">
 <head>
+<script>/* From 13 Nov the app is planner.html; the classic pages stay reachable with ?classic until 20 Nov. */
+try{ if(/[?&]classic/.test(location.search)) sessionStorage.setItem("classic","1");
+  if(!location.hash && !sessionStorage.getItem("classic")) location.replace("planner.html"); }catch(e){}</script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#0B0C0E">
@@ -469,7 +472,7 @@ input[type=time]{width:100%;padding:9px 11px;border-radius:9px;border:1px solid 
 <link rel="stylesheet" href="orbit.css?v=8">
 <script src="orbit.js?v=5"></script>
 <script src="sessions.js?v=4"></script>
-<script src="core.js?v=8"></script>
+<script src="core.js?v=9"></script>
 <script src="desktop.js?v=21"></script>
 </body>
 </html>

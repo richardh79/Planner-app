@@ -2,7 +2,7 @@
   "name": "Planner",
   "short_name": "Planner",
   "description": "Where you are, what is next, and one tap to speak an update.",
-  "start_url": "./index.html",
+  "start_url": "./planner.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
