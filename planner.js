@@ -115,10 +115,17 @@ function plModel(){
   });
   var order = {go:0, question:1, task:2, todo:3, date:4, reminder:5};
   D.sort(function(a, b){ return order[a.kind] - order[b.kind]; });
+  /* "For you" and Today show only what belongs to a project in work on the PC. Past dates, reminders and
+     anything from a Planner path or a closed project are kept, folded, under "Not for today". */
+  D.forEach(function(d){
+    var x = d.pid ? projects.filter(function(p){ return p.id === d.pid; })[0] : null;
+    var ongoing = d.kind === "go" || d.kind === "todo" || (x && !x.path && !isClosed(x));
+    d.later = d.kind === "date" || d.kind === "reminder" || !ongoing;
+  });
   projects.forEach(function(x){ x.dec = D.filter(function(d){ return d.pid === x.id && d.kind !== "date"; }); x.light = lightOf(x); x.late = lateOf(x); });
   return {projects:projects, D:D, byThread:byThread};
 }
-function countFor(D){ return D.filter(function(d){ return d.kind !== "reminder" && d.kind !== "date"; }).length; }
+function countFor(D){ return D.filter(function(d){ return !d.later; }).length; }
 function recOf(x){ return (x.p && x.p.rec) || {}; }
 function isClosed(x){ var s = recOf(x).status; return s === "done" || s === "parked" || s === "dropped" || s === "closed"; }
 function lightOf(x){
@@ -238,7 +245,7 @@ function vToday(M){
     html += '<div class="rich"><div class="k">Richard · ' + esc(rb.kind === "morning" ? "morning brief" : "evening wrap") + ', ' + esc(ago(rb.at)) + '</div>' +
       rb.lines.slice(0, 3).map(function(l){ return '<p class="any">' + esc(l) + '</p>'; }).join("") + '</div>';
   }
-  var top = M.D.filter(function(d){ return d.kind !== "reminder" && d.kind !== "date"; }), n = top.length;
+  var top = M.D.filter(function(d){ return !d.later; }), n = top.length;
   var left = '<div class="box needs"><h3>For you · ' + n + (n > 3 ? '<a href="#you">all ›</a>' : "") + '</h3>' +
     (n ? top.slice(0, 3).map(function(d){ return drow(d, true); }).join("") : '<p class="empty">Nothing waits on you.</p>') + '</div>';
   var day = board.week[now.getDay()] || [];
@@ -453,12 +460,19 @@ function vWeek(){
 /* ---------- For you ---------- */
 function vYou(M){
   var html = "";
-  ["go", "question", "task", "todo", "date", "reminder"].forEach(function(k){
-    var list = M.D.filter(function(d){ return d.kind === k; });
-    if(!list.length) return;
-    html += '<h2>' + KIND[k] + ' · ' + list.length + '</h2><div class="box' + (k === "go" ? " needs" : "") + '">' + list.map(function(d){ return drow(d, true); }).join("") + '</div>';
+  function group(k, list){
+    return list.length ? '<h2>' + KIND[k] + ' · ' + list.length + '</h2><div class="box' + (k === "go" ? " needs" : "") + '">' + list.map(function(d){ return drow(d, true); }).join("") + '</div>' : "";
+  }
+  ["go", "question", "task", "todo"].forEach(function(k){
+    html += group(k, M.D.filter(function(d){ return d.kind === k && !d.later; }));
   });
-  $("main").innerHTML = html || '<p class="empty">Nothing waits on you. The projects are moving on their own.</p>';
+  if(!html) html = '<p class="empty">Nothing waits on you. The projects are moving on their own.</p>';
+  var later = M.D.filter(function(d){ return d.later; });
+  if(later.length){
+    html += '<div class="fold" data-fold role="button" tabindex="0"><b>Not for today (' + later.length + ')</b><div class="fold-body">' +
+      ["question", "task", "reminder", "date"].map(function(k){ return group(k, later.filter(function(d){ return d.kind === k; })); }).join("") + '</div></div>';
+  }
+  $("main").innerHTML = html;
 }
 
 /* ---------- More ---------- */

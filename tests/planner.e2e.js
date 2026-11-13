@@ -102,6 +102,8 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) fails++
     await page.goto(base + "#you"); await settle();
     await page.click('.drow[data-d="ask-1"]'); await page.click('.sheet.on .opts button[data-a="keep"]'); await page.waitForTimeout(800);
     ok(wrote("data/answers.jsonl", /"q":"ask-1","a":"keep"/), vp.name + ": an answer goes to answers.jsonl");
+    ok(await page.locator('.drow[data-d="date-old"]').isHidden(), vp.name + ": past dates are folded away under Not for today");
+    await page.click('.fold[data-fold] > b');
     await page.click('.drow[data-d="date-old"]'); await page.click('.sheet.on .opts button[data-a="In 4 weeks"]'); await page.waitForTimeout(800);
     ok(wrote("data/dates.jsonl", /"thread":"old","do":"\d{4}-\d\d-\d\d"/), vp.name + ": a past date is re-dated in dates.jsonl");
     await page.goto(base + "#week"); await settle();
