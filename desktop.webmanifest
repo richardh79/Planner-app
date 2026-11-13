@@ -3,7 +3,7 @@
   "name": "Planner desktop",
   "short_name": "Planner",
   "description": "The whole board on one surface: now, threads, the week, goals and the inbox.",
-  "start_url": "./desktop.html",
+  "start_url": "./projects.html",
   "scope": "./",
   "display": "standalone",
   "background_color": "#0F1013",

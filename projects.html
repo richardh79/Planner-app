@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
+<link rel="manifest" href="desktop.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<title>Projects</title>
+<style>
+:root{--bg:#0b1020;--panel:#111a2e;--panel2:#16223b;--line:#22314f;--ink:#e8edf8;--dim:#8f9cba;--faint:#5d6b89;
+  --accent:#4cc2ff;--good:#34d399;--warn:#fbbf24;--bad:#f87171;--idle:#60a5fa;--off:#64748b;--r:14px}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{background:var(--bg);color:var(--ink);font:15px/1.45 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;
+  min-height:100vh;overflow-x:hidden}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;text-align:left}
+a{color:var(--accent)}
+.wrap{max-width:1280px;margin:0 auto;padding:max(12px,env(safe-area-inset-top)) 16px 48px}
+.any{overflow-wrap:anywhere}
+/* top bar */
+.top{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.brand{font-weight:700;font-size:18px;letter-spacing:-.01em;margin-right:auto}
+.nav{display:flex;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:3px}
+.nav a{color:var(--dim);text-decoration:none;font-size:14px;font-weight:600;padding:7px 12px;border-radius:9px;white-space:nowrap}
+.nav a.on{background:var(--panel2);color:var(--ink)}
+.nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:5px;border-radius:9px;background:var(--warn);color:#111;font-size:11px;text-align:center}
+.asof{font-size:12px;color:var(--dim);width:100%}
+.asof.stale{color:var(--warn)}
+/* counts */
+.counts{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+.count{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:10px 12px}
+.count.on{border-color:var(--accent)}
+.count b{display:block;font-size:24px;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
+.count span{font-size:12px;color:var(--dim)}
+.count.dec b{color:var(--warn)} .count.late b{color:var(--bad)} .count.work b{color:var(--good)}
+/* cards */
+.grid{display:grid;grid-template-columns:1fr;gap:10px}
+@media(min-width:700px){.grid{grid-template-columns:repeat(2,1fr)}}
+@media(min-width:1100px){.grid{grid-template-columns:repeat(3,1fr)}}
+.card{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--h,var(--off));border-radius:var(--r);
+  padding:12px 14px;display:block;width:100%}
+.card:hover{background:var(--panel2)}
+.row{display:flex;align-items:center;gap:8px}
+.name{font-weight:650;font-size:16px;line-height:1.25}
+.hw{font-size:12px;font-weight:600;color:var(--h,var(--dim));margin-left:auto;white-space:nowrap}
+.light{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--dim);white-space:nowrap}
+.light i{width:8px;height:8px;border-radius:50%;background:var(--off);flex:none}
+.light.working i{background:var(--good);animation:pulse 1.4s infinite}
+.light.waiting i{background:var(--warn)} .light.idle i{background:var(--idle)} .light.blocked i{background:var(--bad)}
+.light.closed i{background:transparent;border:1.5px solid var(--faint)}
+@keyframes pulse{50%{opacity:.25}}
+.stage{font-size:13px;color:var(--dim);margin-top:6px}
+.bar{height:6px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:var(--h,var(--accent));border-radius:4px}
+.dates{font-size:13px;margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.chip{font-size:11.5px;font-weight:600;border-radius:7px;padding:1px 7px;background:var(--panel2);color:var(--dim)}
+.chip.bad{background:#f8717122;color:var(--bad)} .chip.warn{background:#fbbf2422;color:var(--warn)} .chip.good{background:#34d39922;color:var(--good)}
+.next{font-size:13px;color:var(--dim);margin-top:6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.flag{margin-left:auto;font-size:12px;font-weight:700;color:var(--warn);white-space:nowrap}
+.fold{display:block;cursor:pointer;margin-top:16px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;width:100%;color:var(--dim);font-size:14px}
+.fold-body{display:none;margin-top:10px}
+.fold.open .fold-body{display:block}
+.mini{font-size:13px;padding:4px 0;border-top:1px solid var(--line);display:flex;gap:8px}
+.mini:first-child{border-top:0}
+.mini em{margin-left:auto;font-style:normal;color:var(--faint)}
+h2{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin:20px 2px 8px;font-weight:600}
+.empty{color:var(--dim);font-size:14px;padding:6px 2px}
+/* project page */
+.back{color:var(--dim);font-size:14px;margin-bottom:8px;display:inline-block;text-decoration:none}
+.phead{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+.phead h1{font-size:22px;font-weight:700;letter-spacing:-.01em;line-height:1.2;margin-right:auto}
+.pill{font-size:13px;font-weight:650;border-radius:9px;padding:3px 10px;background:var(--panel2);color:var(--h,var(--dim));white-space:nowrap}
+.pwin{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:13px;color:var(--dim);margin-bottom:12px}
+.go{display:inline-block;background:var(--accent);color:#06121e;font-weight:650;text-decoration:none;border-radius:9px;padding:6px 12px;font-size:13px}
+.pgrid{display:grid;grid-template-columns:1fr;gap:10px}
+@media(min-width:900px){.pgrid{grid-template-columns:1fr 1fr}.pgrid .wide{grid-column:1/-1}}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;min-width:0}
+.box h3{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);font-weight:600;margin-bottom:8px}
+.box.needs{border-color:#fbbf2466}
+.drow{display:flex;align-items:center;gap:10px;width:100%;padding:8px 0;border-top:1px solid var(--line)}
+.drow:first-of-type{border-top:0}
+.mark{width:18px;height:18px;flex:none;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:700}
+.mark.k-go{background:var(--bad);color:#111}.mark.k-question{background:var(--warn);color:#111}
+.mark.k-task{background:var(--accent);color:#06121e}.mark.k-reminder{border:1.5px solid var(--faint);color:var(--faint)}
+.dlab{font-weight:600;font-size:14.5px}
+.dsub{font-size:12px;color:var(--dim)}
+.dright{margin-left:auto;font-size:12px;color:var(--dim);white-space:nowrap}
+.sched svg{max-width:100%;display:block}
+.sched .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12.5px;color:var(--dim);margin-top:8px}
+.prog{display:flex;align-items:center;gap:14px}
+.prog .big{font-size:30px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1}
+.prog .sub{font-size:12.5px;color:var(--dim)}
+.spark{width:100%;height:46px;margin-top:8px}
+.li{display:flex;gap:8px;align-items:baseline;font-size:14px;padding:5px 0;border-top:1px solid var(--line)}
+.li:first-of-type{border-top:0}
+.who{font-size:11px;font-weight:700;border-radius:6px;padding:0 6px;background:var(--panel2);color:var(--dim);white-space:nowrap}
+.who.you{background:#fbbf2422;color:var(--warn)}
+.score{font-size:12px;font-weight:700;border-radius:6px;padding:0 6px;min-width:26px;text-align:center}
+.score.hi{background:#f8717122;color:var(--bad)}.score.md{background:#fbbf2422;color:var(--warn)}.score.lo{background:var(--panel2);color:var(--dim)}
+.docs{display:flex;gap:8px;flex-wrap:wrap}
+.docs button{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:7px 12px;font-size:13px;font-weight:600}
+/* sheet */
+.veil{position:fixed;inset:0;background:#0009;display:none;z-index:9}
+.veil.on{display:block}
+.sheet{position:fixed;left:0;right:0;bottom:0;max-height:88vh;overflow:auto;background:var(--panel);border-top:1px solid var(--line);
+  border-radius:18px 18px 0 0;padding:16px 16px max(20px,env(safe-area-inset-bottom));z-index:10;display:none}
+.sheet.on{display:block}
+@media(min-width:900px){.sheet{left:50%;right:auto;bottom:auto;top:8vh;width:620px;transform:translateX(-50%);border:1px solid var(--line);border-radius:18px}}
+.sh-k{font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em}
+.sh-t{font-size:20px;font-weight:700;margin:2px 0 12px}
+.sh-x{float:right;font-size:22px;color:var(--dim);line-height:1}
+.kv{display:grid;grid-template-columns:86px 1fr;gap:6px 12px;font-size:14px;margin-bottom:14px}
+.kv dt{color:var(--dim)} .kv dd{overflow-wrap:anywhere}
+.opts{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.opts button{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 14px;font-weight:600}
+.opts button.rec{border-color:var(--accent);background:#4cc2ff1f}
+.opts button.rec::after{content:"  ★ recommended";font-weight:500;color:var(--accent);font-size:12px}
+pre.doc{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.5 ui-monospace,Consolas,monospace;color:var(--ink)}
+.note{font-size:12.5px;color:var(--dim);margin-top:10px}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--accent);
+  border-radius:12px;padding:10px 16px;display:none;z-index:11;max-width:90vw}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="brand">Planner</div>
+    <nav class="nav" id="nav"></nav>
+    <div class="asof" id="asof"></div>
+  </div>
+  <main id="main"><p class="empty">Loading…</p></main>
+</div>
+<div class="veil" id="veil"></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+/* Projects: every project on one page, its project page, and the decisions only the author makes.
+   Data: desktop/portfolio.json (the project packs, filtered on the PC) and desktop/brief.json (windows and
+   waiting items). Writes: data/answers.jsonl only, the same channel as the brief. */
+var TOK = jget("planner.token", "") || "", REPO = ls("planner.repo");
+var port = jget("pj.port", null), brief = jget("pj.brief", null);
+var answered = jget("brief.answered", {});
+var filter = null;                                    // null | "dec" | "late" | "work"
+var H = {red:"--bad", amber:"--warn", green:"--good"};
+var HW = {red:"Problem", amber:"Needs attention", green:"On track"};
+var LIGHT = {working:"Working", waiting:"Waiting for you", idle:"Idle", silent:"Idle", blocked:"Stopped", off:"Shut", closed:"Closed"};
+var KIND = {go:"Go decisions", question:"Questions", task:"Your tasks", reminder:"Reminders"};
+var STOP = {the:1,a:1,an:1,to:1,for:1,of:1,and:1,with:1,on:1,in:1,at:1,by:1,from:1,as:1,via:1,into:1,your:1,his:1,both:1,all:1,is:1,be:1,author:1};
+
+function ls(k){ try{ return localStorage.getItem(k) || ""; }catch(e){ return ""; } }
+function jget(k,d){ try{ var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } }
+function jput(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+function b64d(s){ return decodeURIComponent(Array.prototype.map.call(atob(String(s).replace(/\s/g,"")), function(c){
+  return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2); }).join("")); }
+function b64e(s){ return btoa(unescape(encodeURIComponent(s))); }
+function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+function $(id){ return document.getElementById(id); }
+function toast(m){ var t = $("toast"); t.textContent = m; t.style.display = "block"; clearTimeout(toast.t); toast.t = setTimeout(function(){ t.style.display = "none"; }, 2800); }
+function day(d){ if(!d) return null; var x = new Date(String(d).slice(0,10) + "T12:00:00"); return isNaN(x) ? null : x; }
+function fmt(d){ var x = day(d); return x ? x.toLocaleDateString("en-GB", {day:"numeric", month:"short"}) : ""; }
+function diff(a, b){ return Math.round((day(a) - day(b)) / 86400000); }
+function today(){ return new Date().toISOString().slice(0,10); }
+function ago(iso){
+  if(!iso) return "";
+  var m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  return m < 2 ? "just now" : m < 60 ? m + " min ago" : m < 1440 ? Math.round(m / 60) + " h ago" : Math.round(m / 1440) + " d ago";
+}
+function words(t){ return (String(t).toLowerCase().match(/[a-z0-9]{4,}/g) || []); }
+function overlap(a, b){ var A = words(a), B = words(b), n = 0; A.forEach(function(w){ if(B.indexOf(w) >= 0) n++; }); return n / Math.max(1, Math.min(A.length, B.length)); }
+function label(text, given){
+  if(given) return given;
+  var w = String(text || "").replace(/[?.!]+$/, "").replace(/\s*\(.*?\)\s*/g, " ").split(/\s+/).filter(function(x){ return x && !STOP[x.toLowerCase()]; });
+  var s = w.slice(0, w.length <= 4 ? 4 : 3).join(" ").replace(/[,:;]+$/, "");
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : "Decision";
+}
+
+/* ---------- data ---------- */
+function gh(path, opt){
+  opt = opt || {};
+  var h = {"Accept":"application/vnd.github+json", "Authorization":"Bearer " + TOK, "X-GitHub-Api-Version":"2022-11-28"};
+  if(opt.body) h["Content-Type"] = "application/json";
+  return fetch("https://api.github.com/repos/" + REPO + path, {method:opt.method || "GET", headers:h, cache:"no-store",
+    body:opt.body ? JSON.stringify(opt.body) : undefined}).then(function(r){
+      if(r.status === 404 && opt.soft) return null;
+      if(!r.ok){ var e = new Error("HTTP " + r.status); e.status = r.status; throw e; }
+      return r.json();
+    });
+}
+function pull(name){
+  return gh("/contents/desktop/" + name, {soft:true}).then(function(r){ return r && r.content ? JSON.parse(b64d(r.content)) : null; });
+}
+function load(){
+  if(!TOK || !REPO){ $("main").innerHTML = '<p class="empty">Not connected. Open the classic app once and add the token.</p>'; return; }
+  Promise.all([pull("portfolio.json"), pull("brief.json")]).then(function(x){
+    if(x[0]){ port = x[0]; jput("pj.port", port); }
+    if(x[1]){ brief = x[1]; jput("pj.brief", brief); }
+    draw();
+  }).catch(function(e){ $("asof").textContent = "Could not reach the PC data (" + e.message + "). Showing the last copy."; });
+}
+
+/* One list of projects and one list of decisions, from both files. */
+function model(){
+  var P = ((port && port.projects) || []).filter(function(p){ return p.health || p.rec; });
+  var tiles = (brief && brief.tiles) || [], tmap = {};
+  tiles.forEach(function(t){ tmap[t.id] = t; });
+  var projects = P.map(function(p){ return {id:p.id, name:p.name, p:p, t:tmap[p.id] || null}; });
+  tiles.forEach(function(t){ if(!projects.some(function(x){ return x.id === t.id; })) projects.push({id:t.id, name:t.name, p:null, t:t}); });
+  function byName(n){
+    n = String(n || "").toLowerCase();
+    var hit = projects.filter(function(x){ var a = x.name.toLowerCase(); return a.indexOf(n) === 0 || n.indexOf(a) === 0 || (x.t && x.t.name.toLowerCase() === n); });
+    return hit.length ? hit[0].id : null;
+  }
+  var D = [];
+  ((brief && brief.needs) || []).forEach(function(n){
+    if(answered[n.q] || n.kind === "info") return;
+    D.push({q:n.q, kind:n.kind === "signoff" ? "go" : "question", pid:n.pid || byName(n.project), project:n.project,
+            text:n.text, options:n.options || [], rec:n.rec, detail:n.detail || {}});
+  });
+  tiles.forEach(function(t){
+    (t.you || []).forEach(function(y){
+      if(answered[y.q]) return;
+      D.push({q:y.q, kind:"task", pid:t.id, project:t.name, text:y.text, options:["Done"], detail:{}});
+    });
+  });
+  projects.forEach(function(x){
+    var r = x.p && x.p.rec; if(!r || !r.tasks || r.status !== "active") return;
+    r.tasks.forEach(function(k){
+      var q = "task-" + x.id + "-" + k.id;
+      if(answered[q]) return;
+      if(D.some(function(d){ return d.pid === x.id && overlap(d.text, k.title) >= 0.5; })) return;   // the session already listed it
+      var why = k.critical ? "On the critical path: the finish date moves with it." :
+                k.blocks ? k.blocks + " step" + (k.blocks > 1 ? "s wait" : " waits") + " on it." : "Nothing waits on it yet.";
+      D.push({q:q, kind:(k.critical || k.blocks) ? "task" : "reminder", pid:x.id, project:x.name, text:k.title,
+              options:["Done"], detail:{why:why, by:r.dates && r.dates.due}, plan:true});
+    });
+  });
+  var order = {go:0, question:1, task:2, reminder:3};
+  D.sort(function(a, b){ return order[a.kind] - order[b.kind]; });
+  projects.forEach(function(x){ x.dec = D.filter(function(d){ return d.pid === x.id; }); x.light = lightOf(x); x.late = lateOf(x); });
+  return {projects:projects, D:D};
+}
+function recOf(x){ return (x.p && x.p.rec) || {}; }
+function closed(x){ var s = recOf(x).status; return s === "done" || s === "parked" || s === "dropped" || s === "closed"; }
+function lightOf(x){
+  if(closed(x)) return "closed";
+  if(x.dec && x.dec.some(function(d){ return d.kind === "question" || d.kind === "go"; })) return "waiting";
+  var w = x.p && x.p.window ? x.p.window.state : null;          // the PC's own check of the window process
+  var s = w === "working" ? "working" : x.t ? x.t.state : (w || "off");
+  return s === "silent" ? "idle" : (LIGHT[s] ? s : "off");
+}
+function lateOf(x){
+  var d = recOf(x).dates || {}, due = d.due || (x.p && x.p.due), p85 = d.p85 || (x.p && x.p.p85);
+  return due && p85 && diff(p85, due) > 0 ? diff(p85, due) : 0;
+}
+function hcol(x){ return x.p && x.p.health ? H[x.p.health] : "--off"; }
+function pct(x){ var v = x.p && x.p.progress != null ? x.p.progress : (x.t ? x.t.pct : null); return v == null ? null : Math.round(v); }
+
+/* ---------- drawing ---------- */
+function nav(view, M){
+  var nd = M.D.filter(function(d){ return d.kind !== "reminder"; }).length;
+  var todayUrl = matchMedia("(min-width: 900px)").matches ? "desktop.html?today" : "brief.html";
+  $("nav").innerHTML = '<a href="#" class="' + (view === "list" || view === "project" ? "on" : "") + '">Projects</a>' +
+    '<a href="#decisions" class="' + (view === "decisions" ? "on" : "") + '">Decisions' + (nd ? '<span class="n">' + nd + '</span>' : "") + '</a>' +
+    '<a href="' + todayUrl + '">Today</a>';
+  var at = port && port.at, stale = at && Date.now() - new Date(at).getTime() > 15 * 60000;
+  $("asof").className = "asof" + (stale ? " stale" : "");
+  $("asof").textContent = at ? "From the PC, " + ago(at) + (stale ? ": the PC may be off or asleep" : "") : "No data from the PC yet";
+}
+
+function draw(){
+  var M = model(), h = location.hash.replace(/^#/, "");
+  try{
+    if(h.indexOf("p/") === 0){ nav("project", M); drawProject(M, h.slice(2)); }
+    else if(h === "decisions"){ nav("decisions", M); drawDecisions(M); }
+    else { nav("list", M); drawList(M); }
+  }catch(e){ $("main").innerHTML = '<p class="empty">This view could not be drawn (' + esc(e.message) + ').</p>'; }
+}
+
+function card(x){
+  var r = recOf(x), d = r.dates || {}, v = pct(x), due = d.due || (x.p && x.p.due), p85 = d.p85 || (x.p && x.p.p85);
+  var dates = [];
+  if(closed(x)) dates.push('<span class="chip">' + esc(r.status === "parked" ? "Parked" : "Closed") + (r.closed && r.closed.date ? " " + fmt(r.closed.date) : "") + '</span>');
+  else {
+    if(due) dates.push("Due " + fmt(due));
+    if(p85) dates.push("likely " + fmt(p85));
+    if(x.late) dates.push('<span class="chip bad">' + x.late + ' d late</span>');
+    else if(due && p85) dates.push('<span class="chip good">on time</span>');
+  }
+  var nd = x.dec.filter(function(z){ return z.kind !== "reminder"; }).length;
+  var next = closed(x) ? (r.closed && r.closed.left ? r.closed.left + " step" + (r.closed.left > 1 ? "s" : "") + " left" : "") :
+             (x.t && x.t.next) || (x.p && x.p.next) || "";
+  return '<a class="card" href="#p/' + esc(x.id) + '" style="--h:var(' + hcol(x) + ');text-decoration:none;color:inherit">' +
+    '<div class="row"><span class="name any">' + esc(x.name) + '</span><span class="hw">' + esc(x.p && x.p.health ? HW[x.p.health] : "No plan") + '</span></div>' +
+    '<div class="row" style="margin-top:4px"><span class="light ' + x.light + '"><i></i>' + LIGHT[x.light] + '</span>' +
+      (nd ? '<span class="flag">⚑ ' + nd + '</span>' : "") + '</div>' +
+    '<div class="stage any">' + [esc((x.p && x.p.phase) || ""), v != null ? v + "%" : ""].filter(Boolean).join(" · ") + '</div>' +
+    (v != null ? '<div class="bar"><i style="width:' + Math.min(100, v) + '%"></i></div>' : "") +
+    (dates.length ? '<div class="dates">' + dates.join(" · ").replace(/ · <span/g, " <span") + '</div>' : "") +
+    (next ? '<div class="next any">' + (closed(x) ? "" : "Next: ") + esc(next) + '</div>' : "") + '</a>';
+}
+
+function drawList(M){
+  var live = M.projects.filter(function(x){ return !closed(x); }), done = M.projects.filter(closed);
+  var nd = M.D.filter(function(d){ return d.kind !== "reminder"; }).length;
+  var late = live.filter(function(x){ return x.late; }).length, work = live.filter(function(x){ return x.light === "working"; }).length;
+  function rank(x){
+    return x.dec.some(function(d){ return d.kind !== "reminder"; }) ? 0 : x.p && x.p.health === "red" ? 1 : x.light === "working" ? 2 :
+           x.p && x.p.health === "amber" ? 3 : x.p && x.p.health === "green" ? 4 : 5;
+  }
+  live.sort(function(a, b){ return rank(a) - rank(b) || a.name.localeCompare(b.name); });
+  var shown = live.filter(function(x){
+    return !filter || (filter === "dec" && x.dec.some(function(d){ return d.kind !== "reminder"; })) || (filter === "late" && x.late) || (filter === "work" && x.light === "working");
+  });
+  var dorm = (port && port.dormant) || [];
+  $("main").innerHTML =
+    '<div class="counts">' +
+      '<button class="count dec' + (filter === "dec" ? " on" : "") + '" data-f="dec"><b>' + nd + '</b><span>for you</span></button>' +
+      '<button class="count late' + (filter === "late" ? " on" : "") + '" data-f="late"><b>' + late + '</b><span>late</span></button>' +
+      '<button class="count work' + (filter === "work" ? " on" : "") + '" data-f="work"><b>' + work + '</b><span>working now</span></button>' +
+    '</div>' +
+    (shown.length ? '<div class="grid">' + shown.map(card).join("") + '</div>' : '<p class="empty">Nothing in this filter. Tap the count again to show all.</p>') +
+    (done.length ? '<div class="fold" data-fold role="button" tabindex="0"><b>Closed (' + done.length + ')</b><div class="fold-body"><div class="grid">' + done.map(card).join("") + '</div></div></div>' : "") +
+    (dorm.length ? '<div class="fold" data-fold role="button" tabindex="0"><b>Dormant (' + dorm.length + ')</b> · no project plan yet<div class="fold-body">' +
+      dorm.map(function(d){ return '<div class="mini any"><span>' + esc(d.name) + '</span><em>' + esc(d.status) + '</em></div>'; }).join("") + '</div></div>' : "");
+}
+
+function drow(d, withProject){
+  var mk = {go:"!", question:"?", task:"•", reminder:""}[d.kind];
+  var by = d.detail && d.detail.by ? "by " + fmt(d.detail.by) : "";
+  return '<button class="drow" data-d="' + esc(d.q) + '"><span class="mark k-' + d.kind + '">' + mk + '</span>' +
+    '<span><span class="dlab any">' + esc(label(d.text, d.detail && d.detail.label)) + '</span>' +
+    (withProject ? '<br><span class="dsub any">' + esc(d.project) + '</span>' : "") + '</span>' +
+    '<span class="dright">' + esc(by) + ' ›</span></button>';
+}
+
+function drawDecisions(M){
+  var html = "";
+  ["go", "question", "task", "reminder"].forEach(function(k){
+    var list = M.D.filter(function(d){ return d.kind === k; });
+    if(!list.length) return;
+    html += '<h2>' + KIND[k] + ' · ' + list.length + '</h2><div class="box' + (k === "go" ? " needs" : "") + '">' + list.map(function(d){ return drow(d, true); }).join("") + '</div>';
+  });
+  $("main").innerHTML = html || '<p class="empty">Nothing waits on you. The projects are moving on their own.</p>';
+}
+
+/* the schedule: a date line (start, today, due, likely range) over the stages and their gates */
+function schedule(x){
+  var r = recOf(x), d = r.dates || {}, ph = r.phases || [];
+  var start = d.started || today(), due = d.due, p50 = d.p50, p85 = d.p85, t = today();
+  var pts = [start, t, due, p50, p85].filter(Boolean).sort(), lo = pts[0], hi = pts[pts.length - 1];
+  var span = Math.max(1, diff(hi, lo) + 2), W = Math.max(280, Math.min(1240, ($("main").clientWidth || 360) - 30));
+  function X(s){ return 10 + (W - 20) * (diff(s, lo) + 1) / span; }
+  var s = '<svg viewBox="0 0 ' + W + ' 96" width="' + W + '" height="96" role="img" aria-label="Schedule">';
+  s += '<line x1="10" y1="30" x2="' + (W - 10) + '" y2="30" stroke="var(--line)" stroke-width="2"/>';
+  if(p50 && p85) s += '<rect x="' + X(p50) + '" y="22" width="' + Math.max(3, X(p85) - X(p50)) + '" height="16" rx="4" fill="' + (x.late ? "#f8717140" : "#34d39940") + '"/>';
+  s += '<line x1="' + X(t) + '" y1="12" x2="' + X(t) + '" y2="46" stroke="var(--accent)" stroke-width="2"/><text x="' + X(t) + '" y="9" fill="var(--accent)" font-size="11" text-anchor="middle">today</text>';
+  if(due) s += '<path d="M' + X(due) + ' 18 l0 24 M' + X(due) + ' 18 l9 4 l-9 4" stroke="var(--ink)" stroke-width="2" fill="var(--ink)"/>';
+  s += '<text x="10" y="58" fill="var(--dim)" font-size="11">' + esc(fmt(lo)) + '</text>';
+  if(p85) s += '<text x="' + Math.min(W - 10, X(p85)) + '" y="' + (due ? 16 : 58) + '" fill="var(--dim)" font-size="11" text-anchor="end">likely</text>';
+  if(due) s += '<text x="' + X(due) + '" y="58" fill="var(--ink)" font-size="11" text-anchor="middle">due ' + esc(fmt(due)) + '</text>';
+  var tot = ph.reduce(function(a, p){ return a + Math.max(1, p.total); }, 0) || 1, x0 = 10;
+  ph.forEach(function(p){
+    var w = (W - 20) * Math.max(1, p.total) / tot;
+    var col = p.status === "passed" ? "var(--good)" : p.status === "active" ? "var(--accent)" : "var(--line)";
+    s += '<rect x="' + (x0 + 1) + '" y="70" width="' + Math.max(2, w - 2) + '" height="10" rx="3" fill="' + col + '" opacity="' + (p.status === "planned" ? .7 : 1) + '"/>';
+    if(p.gate) s += '<rect x="' + (x0 + w - 6) + '" y="69" width="9" height="9" transform="rotate(45 ' + (x0 + w - 1.5) + ' 73.5)" fill="' + (p.gate_passed ? "var(--good)" : "var(--bg)") + '" stroke="var(--ink)" stroke-width="1.2"/>';
+    x0 += w;
+  });
+  s += '</svg>';
+  var act = ph.filter(function(p){ return p.status === "active"; })[0];
+  var leg = [];
+  if(act) leg.push("Now: " + esc(act.title) + " (" + act.done + " of " + act.total + ")");
+  if(p50) leg.push("Likely " + esc(fmt(p50)) + (p85 && p85 !== p50 ? " to " + esc(fmt(p85)) : ""));
+  if(x.late) leg.push('<span class="chip bad">' + x.late + ' d past due at 85%</span>');
+  else if(due && p85) leg.push('<span class="chip good">meets the due date</span>');
+  if(due && !d.due_confirmed) leg.push('<span class="chip warn">due date not confirmed by you</span>');
+  return '<div class="box sched wide"><h3>Schedule</h3>' + s + '<div class="legend">' + leg.join("<span>·</span>") + '</div>' +
+    '<div class="legend"><span>◆ gate (filled = passed)</span><span style="color:var(--good)">■ done</span><span style="color:var(--accent)">■ current</span><span>■ planned</span></div></div>';
+}
+
+function spark(tr){
+  if(!tr || tr.length < 2) return "";
+  var W = 300, Hh = 46, mx = Math.max(100, Math.max.apply(null, tr));
+  var pts = tr.map(function(v, i){ return (i * W / (tr.length - 1)).toFixed(1) + "," + (Hh - 4 - (Hh - 8) * v / mx).toFixed(1); }).join(" ");
+  return '<svg class="spark" viewBox="0 0 ' + W + ' ' + Hh + '" preserveAspectRatio="none"><polyline points="' + pts + '" fill="none" stroke="var(--accent)" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>' +
+    '<div class="dsub">Last 14 days' + (tr[tr.length - 1] === tr[tr.length - 4] ? ' · flat for 3 days' : "") + '</div>';
+}
+
+function drawProject(M, id){
+  var x = M.projects.filter(function(z){ return z.id === id; })[0];
+  if(!x){ $("main").innerHTML = '<a class="back" href="#">‹ Projects</a><p class="empty">This project is not in the latest data.</p>'; return; }
+  var r = recOf(x), v = pct(x), out = [];
+  var win = '<span class="light ' + x.light + '"><i></i>' + LIGHT[x.light] + (x.t && x.t.heard ? " · heard " + ago(x.t.heard) : "") + '</span>';
+  if(x.p && x.p.claude) win += '<a class="go" href="' + esc(x.p.claude) + '" target="_blank" rel="noopener">Open in Claude</a>';
+  if(x.light === "off") win += '<span>Ask Richard to open it when you want work done here.</span>';
+  if(closed(x)){
+    var c = r.closed || {};
+    out.push('<div class="box wide"><h3>' + (r.status === "parked" ? "Parked" : "Closed") + (c.date ? " " + esc(fmt(c.date)) : "") + '</h3>' +
+      (c.outcome ? '<p class="any">' + esc(c.outcome) + '</p>' : "") +
+      '<p class="dsub" style="margin-top:6px">' + (c.left ? c.left + " step" + (c.left > 1 ? "s" : "") + " left" : "Nothing left") + '</p>' +
+      (c.left_titles || []).map(function(t){ return '<div class="li any">' + esc(t) + '</div>'; }).join("") +
+      (c.restart ? '<p class="note any">Restart when: ' + esc(c.restart) + '</p>' : "") + '</div>');
+  } else if(x.dec.length){
+    out.push('<div class="box needs wide"><h3>Needs you · ' + x.dec.length + '</h3>' + x.dec.map(function(d){ return drow(d, false); }).join("") + '</div>');
+  }
+  if(r.phases && r.phases.length) out.push(schedule(x));
+  if(v != null){
+    out.push('<div class="box"><h3>Progress</h3><div class="prog"><span class="big">' + v + '%</span><span class="sub">' +
+      (r.total ? r.passed + " of " + r.total + " steps done<br>" : "") + esc((x.p && x.p.phase) || "") + '</span></div>' + spark(r.trend) + '</div>');
+  }
+  var nx = r.next3 || (x.t && x.t.next ? [{title:x.t.next, owner:"assistant"}] : []);
+  if(nx.length && !closed(x)){
+    out.push('<div class="box"><h3>Next</h3>' + nx.map(function(n, i){
+      return '<div class="li"><b>' + (i + 1) + '</b><span class="any">' + esc(n.title) + '</span><span class="who' + (n.owner === "author" ? " you" : "") + '" style="margin-left:auto">' +
+        (n.owner === "author" ? "you" : "team") + '</span></div>'; }).join("") + '</div>');
+  }
+  if(r.top_risks && r.top_risks.length){
+    out.push('<div class="box"><h3>Risks · ' + (r.risk_count || r.top_risks.length) + ' open</h3>' + r.top_risks.map(function(k){
+      var c = k.score >= 15 ? "hi" : k.score >= 9 ? "md" : "lo";
+      return '<div class="li"><span class="score ' + c + '">' + esc(k.score) + '</span><span class="any">' + esc(k.title) + '</span></div>'; }).join("") +
+      (r.risk_count > r.top_risks.length ? '<div class="dsub">+' + (r.risk_count - r.top_risks.length) + ' more in the plan</div>' : "") + '</div>');
+  } else if(r.risk_count){
+    out.push('<div class="box"><h3>Risks</h3><p>' + r.risk_count + ' open (detail kept on the PC)</p></div>');
+  }
+  if(r.decisions && r.decisions.length){
+    out.push('<div class="box"><h3>Recent decisions</h3>' + r.decisions.map(function(k){
+      return '<div class="li"><span class="dsub" style="white-space:nowrap">' + esc(fmt(k.date)) + '</span><span class="any">' + esc(k.call) +
+        (k.answer ? ' <b>' + esc(k.answer) + '</b>' : "") + '</span></div>'; }).join("") + '</div>');
+  }
+  if(x.p && x.p.why && x.p.why.length && !closed(x)){
+    out.push('<div class="box"><h3>Why this health</h3>' + x.p.why.map(function(w){ return '<div class="li any">' + esc(w.replace(/^EXCEPTION:\s*/, "")) + '</div>'; }).join("") + '</div>');
+  }
+  if(r.doc_status || r.doc_plan){
+    out.push('<div class="box"><h3>Documents</h3><div class="docs">' + (r.doc_status ? '<button data-doc="status">Status report</button>' : "") +
+      (r.doc_plan ? '<button data-doc="plan">Plan</button>' : "") + '</div></div>');
+  }
+  if(!x.p) out.push('<div class="box wide"><p class="dsub">No project plan on the PC for this one yet: only what its window reports. Ask Richard to set one up if it should be managed.</p></div>');
+  $("main").innerHTML = '<a class="back" href="#">‹ Projects</a>' +
+    '<div class="phead" style="--h:var(' + hcol(x) + ')"><h1 class="any">' + esc(x.p ? (x.p.name) : x.name) + '</h1><span class="pill">' + esc(x.p && x.p.health ? HW[x.p.health] : "No plan") + '</span></div>' +
+    '<div class="pwin">' + win + '</div><div class="pgrid">' + out.join("") + '</div>';
+  $("main").dataset.pid = id;
+}
+
+/* ---------- sheets ---------- */
+function openSheet(html){ $("sheet").innerHTML = '<button class="sh-x" data-close aria-label="Close">×</button>' + html; $("sheet").classList.add("on"); $("veil").classList.add("on"); $("sheet").scrollTop = 0; }
+function closeSheet(){ $("sheet").classList.remove("on"); $("veil").classList.remove("on"); }
+
+function decisionSheet(d){
+  var t = d.detail || {}, kv = [];
+  function add(k, v){ if(v) kv.push('<dt>' + k + '</dt><dd>' + v + '</dd>'); }
+  add("What", esc(d.text) + (t.what && t.what.length ? '<br><span class="dsub">' + t.what.map(esc).join("<br>") + '</span>' : ""));
+  add("Why", esc(t.why));
+  if(d.kind === "question" || d.kind === "go"){
+    add("If yes", esc(t.yes)); add("If no", esc(t.no));
+    if(!t.yes && d.options.length > 1) add("Options", d.options.map(function(o){ return esc(o) + (o === d.rec ? " (recommended)" : ""); }).join("<br>"));
+  }
+  add("Undo?", esc(t.undo));
+  add("By", t.by ? esc(fmt(t.by)) + (diff(t.by, today()) >= 0 ? " (" + diff(t.by, today()) + " d left)" : ' <span class="chip bad">overdue</span>') : "");
+  if(d.rec) add("Richard", "recommends " + esc(d.rec));
+  var btn = d.options.map(function(o){ return '<button data-a="' + esc(o) + '" class="' + (o === d.rec ? "rec" : "") + '">' + esc(o) + '</button>'; }).join("");
+  btn += '<button data-close>Later</button>';
+  var note = d.plan ? "Done tells the project's window; it checks the evidence and records the step." :
+             d.kind === "go" ? "A critical step: nothing happens until you answer." :
+             d.kind === "question" && !t.why ? "The session gave only the question; ask Richard for more if it is not clear." : "";
+  openSheet('<div class="sh-k">' + esc(KIND[d.kind].replace(/s$/, "")) + ' · ' + esc(d.project) + '</div><div class="sh-t any">' + esc(label(d.text, t.label)) + '</div>' +
+    '<dl class="kv">' + kv.join("") + '</dl><div class="opts" data-q="' + esc(d.q) + '">' + btn + '</div>' + (note ? '<p class="note">' + note + '</p>' : ""));
+}
+
+function answer(q, a, btn){
+  var line = JSON.stringify({q:q, a:a, at:new Date().toISOString(), via:"projects"});
+  btn.disabled = true;
+  var put = function(tries){
+    return gh("/contents/data/answers.jsonl", {soft:true}).then(function(r){
+      var body = r && r.content ? b64d(r.content) : "";
+      if(body && body.slice(-1) !== "\n") body += "\n";
+      var b = {message:"Answer " + q, content:b64e(body + line + "\n")};
+      if(r && r.sha) b.sha = r.sha;
+      return gh("/contents/data/answers.jsonl", {method:"PUT", body:b});
+    }).catch(function(e){ if(e.status === 409 && tries) return put(tries - 1); throw e; });
+  };
+  put(2).then(function(){
+    answered[q] = Date.now(); jput("brief.answered", answered); closeSheet(); draw();
+    toast(a === "Done" ? "Marked done. The PC records it within a minute." : "Sent: " + a + ". The PC records it within a minute.");
+  }).catch(function(e){ btn.disabled = false; toast("Not sent (" + e.message + "). Try again."); });
+}
+
+document.addEventListener("click", function(ev){
+  var t = ev.target;
+  if(t.closest("[data-close]") || t === $("veil")){ closeSheet(); return; }
+  var f = t.closest("[data-f]"); if(f){ filter = filter === f.dataset.f ? null : f.dataset.f; draw(); return; }
+  var fo = t.closest("[data-fold]"); if(fo && !t.closest(".card")){ fo.classList.toggle("open"); return; }
+  var dr = t.closest("[data-d]");
+  if(dr){ var M = model(), d = M.D.filter(function(z){ return z.q === dr.dataset.d; })[0]; if(d) decisionSheet(d); return; }
+  var ab = t.closest(".opts [data-a]"); if(ab){ answer(ab.parentNode.dataset.q, ab.dataset.a, ab); return; }
+  var dc = t.closest("[data-doc]");
+  if(dc){
+    var x = model().projects.filter(function(z){ return z.id === $("main").dataset.pid; })[0], r = x ? recOf(x) : {};
+    openSheet('<div class="sh-k">' + esc(x ? x.name : "") + '</div><div class="sh-t">' + (dc.dataset.doc === "plan" ? "Plan" : "Status report") + '</div>' +
+      '<pre class="doc">' + esc(dc.dataset.doc === "plan" ? r.doc_plan : r.doc_status) + '</pre>');
+  }
+});
+document.addEventListener("keydown", function(e){ if(e.key === "Escape") closeSheet(); });
+var rsz; window.addEventListener("resize", function(){ clearTimeout(rsz); rsz = setTimeout(function(){ if(location.hash.indexOf("#p/") === 0) draw(); }, 200); });
+window.addEventListener("hashchange", function(){ closeSheet(); draw(); window.scrollTo(0, 0); });
+document.addEventListener("visibilitychange", function(){ if(!document.hidden) load(); });
+
+if(port || brief) draw();
+load();
+setInterval(function(){ if(!document.hidden) load(); }, 60000);
+if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(function(){});
+</script>
+</body>
+</html>
