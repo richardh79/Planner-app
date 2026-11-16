@@ -1,7 +1,7 @@
 "use strict";
 /* Planner: Today, Projects, Week, For you, More. One page for the phone and the PC.
    Built on core.js: the board, the timetable and its edits, to-dos, dates, answers and the write queue are the
-   same as the classic apps, so every write lands in the same file in the same shape.
+   the same everywhere, so every write lands in the same file in the same shape.
    PC data: desktop/portfolio.json (project packs, filtered on the PC) and desktop/brief.json (windows, waiting items). */
 
 var PORT = get("pj.port", null), BRIEF = get("pj.brief", null);
@@ -158,7 +158,9 @@ function plNav(M){
   $("nav").innerHTML = [["today","Today"],["projects","Projects"],["week","Week"],["you","For you"],["more","More"]].map(function(x){
     return '<a href="#' + x[0] + '" class="' + (tab === x[0] ? "on" : "") + '">' + x[1] + (x[0] === "you" && n ? '<span class="n">' + n + '</span>' : "") + '</a>';
   }).join("");
-  var at = PORT && PORT.at, stale = at && Date.now() - new Date(at).getTime() > 15 * 60000;
+  /* The PC rewrites "at" when something changed and at least every 30 minutes (phone_portfolio.py HEARTBEAT),
+     so only a gap longer than that means the PC is not feeding the app. */
+  var at = PORT && PORT.at, stale = at && Date.now() - new Date(at).getTime() > 45 * 60000;
   $("asof").className = "asof" + (stale ? " stale" : "");
   $("asof").textContent = (at ? "From the PC, " + ago(at) + (stale ? ": the PC may be off or asleep" : "") : (token ? "Waiting for the PC" : "Not connected: open More")) +
     (queue.length ? " · " + queue.length + " change" + (queue.length > 1 ? "s" : "") + " waiting to send" : "");
@@ -483,9 +485,7 @@ function vMore(){
     '<button class="btn pri" data-save="1">Save</button><p class="note">The token stays on this device only.</p></div>' +
     '<div class="box"><h3>Notifications</h3><div id="pushWrap"></div></div>' +
     '<div class="box"><h3>Sending</h3><p>' + (queue.length ? queue.length + " change" + (queue.length > 1 ? "s" : "") + " waiting to send." : "Everything is sent.") + '</p>' +
-    '<div class="btns" style="margin-top:8px"><button class="btn" data-flush="1">Send now</button><button class="btn" data-repair="1">Repair this app</button></div></div>' +
-    '<div class="box"><h3>Old apps (until 20 November)</h3><div class="btns"><a class="btn" href="index.html?classic" style="text-decoration:none;color:inherit">Classic phone app</a>' +
-    '<a class="btn" href="desktop.html?classic" style="text-decoration:none;color:inherit">Classic PC app</a></div><p class="note">Files, search and the old views live there until then.</p></div></div>';
+    '<div class="btns" style="margin-top:8px"><button class="btn" data-flush="1">Send now</button><button class="btn" data-repair="1">Repair this app</button></div></div></div>';
   try{ pushPanel($("pushWrap"), "btn", "note"); }catch(e){ $("pushWrap").textContent = "Not available in this browser."; }
 }
 

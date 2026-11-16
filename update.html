@@ -41,7 +41,7 @@ a.btn,button{display:block;width:100%;margin-top:18px;padding:15px 0;border:none
   <div class="step" id="s2"><b>Removing the old worker</b><span class="s">…</span></div>
   <div class="step" id="s3"><b>Fetching the current version</b><span class="s">…</span></div>
 
-  <a class="btn" id="go" href="./index.html">Open the app</a>
+  <a class="btn" id="go" href="./planner.html">Open the app</a>
   <p class="note" id="ver">Checking…</p>
   <p class="note">If it still opens old after this, close the app completely, swiping it away rather than just going to the home screen, then open it again.</p>
 </div>
@@ -83,7 +83,7 @@ a.btn,button{display:block;width:100%;margin-top:18px;padding:15px 0;border:none
       .catch(function(){ mark("s3", false, "no signal"); });
   }).then(function(){
     var go=document.getElementById("go");
-    go.href="./index.html?fresh="+Date.now();
+    go.href="./planner.html?fresh="+Date.now();
     go.textContent="Open the app";
     setTimeout(function(){ location.replace(go.href); }, 2500);
   });

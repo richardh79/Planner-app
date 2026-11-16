@@ -79,6 +79,13 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) fails++
     const wrote = (file, re) => puts.some(x => x.path === file && re.test(x.text));
     const settle = () => page.waitForTimeout(500);
 
+    // Old addresses and installed icons must land on the one app, and must never draw a screen of their own.
+    for (const old of ["index.html", "desktop.html", "brief.html", "projects.html"]) {
+      const src = fs.readFileSync(path.join(__dirname, "..", old), "utf8");
+      ok(src.length < 800 && !/<script src=/.test(src) && /<body[^>]*><\/body>/.test(src), vp.name + ": " + old + " holds no screen of its own");
+      await page.goto(base.replace("planner.html", old)); await page.waitForSelector(".now, #main"); await settle();
+      ok(/\/planner\.html/.test(page.url()), vp.name + ": " + old + " opens the app");
+    }
     await page.goto(base); await page.waitForSelector(".now"); await settle();
     ok(!(await broken()) && (await wide()) <= 0, vp.name + ": Today draws, no sideways scroll");
     ok(/Richard/.test(await page.textContent("main")), vp.name + ": Today shows Richard's brief");

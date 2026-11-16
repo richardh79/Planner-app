@@ -1,196 +1,43 @@
 # Planner
 
-A small installable board that runs entirely in the browser and talks to one
+A small installable app that runs entirely in the browser and talks to one
 GitHub repository of your own. There is no server, no database and no account
 to create. The page is static; everything it shows comes from a repository you
 name, fetched with a token you make.
 
 This repository holds the code only. It contains no data of any kind.
 
-## What it does
+## One app
 
-- **Now.** Reads the clock against your week and shows the block you are in,
-  how long is left, and what comes next.
-- **Work.** Each piece with its stage and progress. One tap starts tracking,
-  another stops it, and the session is appended to a log file in your
-  repository. **One timer runs at a time**: starting one stops the others, and
-  a timer left running past twelve hours asks for the real minutes.
-- **Say.** Speak or type an update, tag it to a thread, and it becomes an issue.
-- **Inbox.** Open issues with their replies, and a button to close one.
+`planner.html` is the app, on a phone and on a wide screen alike. It has five
+sections:
+
+- **Today.** The block of the timetable you are in, what waits on you, what is
+  moving, the dates to watch and who you are waiting on.
+- **Projects.** Every project as one card, and one page per project.
+- **Week.** The timetable, with a project assigned to a block by one tap.
+- **For you.** Decisions, your own tasks and your to-dos for the projects in
+  work. Past dates, reminders and items from parked work sit folded under
+  "Not for today".
+- **More.** The connection, notifications, the send queue and Repair.
 
 Offline capable. Writes queue locally and send when the signal returns.
+
+`index.html`, `desktop.html`, `brief.html` and `projects.html` are not screens.
+Each is a few lines that open `planner.html`, kept only so old links and icons
+installed earlier still work. Nothing else may be added to them.
 
 ## Setup
 
 1. Enable Pages on this repository: Settings, Pages, deploy from a branch,
-   `main`, root. Wait a minute, then open the URL it gives you.
+   `main`, root. Wait a minute, then open `<your pages url>/planner.html`.
 2. Make a fine-grained personal access token at github.com, Settings, Developer
    settings, Personal access tokens. Give it access to your data repository
    only, with **Contents** and **Issues** set to read and write. Nothing else.
-3. In the app, open settings, enter the repository as `owner/name`, paste the
-   token, and save.
-4. Chrome menu, Install app.
-
-The token is stored in this browser alone and is sent only to `api.github.com`.
-Nothing else ever sees it. Remove it from the same settings screen.
-
-## The phone app
-
-`index.html` is the phone. It reads the same board and now walks the same way
-as the desktop view.
-
-- **Work** is categories, collapsed. Tap one to open its paths. Each card shows
-  the stage, where the path ends, and the time logged this week.
-- **The path** opens from any thread: stones for the stages, the one you stand
-  on marked, tap another to move it. The final and the next step sit under it.
-  Setting a stage writes `data/status.jsonl` and opens an issue, exactly as the
-  desktop does, so the two never disagree.
-- **Now** draws the day with the assigned thread on each working block. A
-  working block with nothing on it says so. Tap it and pick a thread from any
-  category, and the choice is written to `data/plan.jsonl`.
-- **Map** adds a lane per category, each path with how far along it is and the
-  destination it ends at.
-- **Files** linked to a thread open from the path, and a dated line can be added
-  under any section from the phone. Patent files carry a warning, the same one
-  the repository carries.
-
-## The desktop view
-
-`desktop.html` is the same data on a wide screen, built as three panes rather
-than a page of cards: a rail of categories on the left, the threads in the
-chosen category in the middle, and one thread open on the right. Nothing is
-expanded that was not asked for.
-
-The detail pane is where the work happens. For the open thread it carries the
-stage (click a stage to set it), a start and stop timer, the files linked to
-it, a box that turns what you type into an issue, and that thread's open
-issues with a close button. Files open in the same pane: pick a section, add a
-dated line, save, and the commit lands in the repository.
-
-`Today` is the day's plan, drawn as a trail from morning to night. Every
-working block takes exactly one thread, and a working block with nothing
-assigned is drawn as a hole in the road. The choice is written to
-`data/plan.jsonl`. That is the whole point of the view: capacity is rarely the
-constraint, assignment is.
-
-`The map` is every path at once, grouped by category, each with how far along
-it you are and the final it ends at.
-
-The header carries the walk as one sentence: the day and time, the block you
-are in, the thread on it, the stage you stand on and how long the block has
-left. Off the clock it names the next block instead. Disconnected it says so
-and points at settings.
-
-Keys: `⌘K` or `Ctrl+K` for the palette, `[` and `]` to move a stage back and
-forward while a path is open, `/` for search, `r` to sync.
-
-⌘K or Ctrl+K opens a command palette over every thread, category and file.
-
-Open `<your pages url>/desktop.html`. In Chrome or Edge, the install button in
-the address bar turns it into a desktop app in its own window. The phone app is
-untouched: two manifests, two installs, one set of data.
-
-## Dates, and the chase rule
-
-Two additions that make a daily list possible.
-
-**A do-date on an item.** Not a deadline, which the planner refuses to invent.
-The day you mean to touch it, yours to move. Set it from the item, and the
-choice is written to `data/dates.jsonl`, append-only like the rest. Today then
-buckets everything into late, on today and this week.
-
-**A chase rule.** An item can carry `who` and `since`: the person or journal
-holding it and the date it left your hands. Once it has been waiting longer
-than `chaseAfter` days, seven by default, it appears at the top of Today as
-something to chase. A journal gets a longer window than a person.
-
-Neither is guessed. Both are written down only when you say them.
-
-## Each signal on its own channel
-
-- **The notification** carries the numbers in its title, so the lock screen
-  alone says the day: `Chase 2 · <who> 12 days`.
-- **The reminder** is the morning message itself. Every line is a checkbox.
-  Ticking one in the GitHub app is the reply; a workflow in the private
-  repository files it into `data/ticks.jsonl` within a minute. A chase tick
-  restarts that item's chase clock.
-- **One question a day** arrives in the same message with its answers as
-  boxes, and sits at the top of NOW with its answers as buttons. Both pick the
-  same question: the day number modulo the questions still open. An answer is
-  a line in `data/answers.jsonl` and an issue, so it is filed like anything
-  else.
-- **Chasing** shows each waiting item as a bar that turns amber at the chase
-  limit and red at twice it, with a short message already drafted to copy. The
-  draft is built at runtime from the board; nothing about anyone is in this
-  repository.
-- **Messages carry ticks**: one for sent, two blue once answered, two green
-  once filed, with the reply's first line under the message.
-- **Goals are tiles**: ten slots for ten papers, filled when an item reaches
-  the stage the goal counts, amber while under review, with the pace needed
-  when a goal has an end date.
-- **Saturday is a swipe**: one drifting item at a time, left to drop, right to
-  start, up for the next working day, down to delay four weeks. Each decision
-  is a line in `data/dates.jsonl`; the whole review reaches Claude as one
-  message. On the desktop the arrow keys do the same.
-- **One look**, the first item on the desktop and the MAP tab on the phone,
-  puts all of it on one screen.
-- **To-dos** live on each path and gather on NOW and Today; a tap ticks one
-  off, and the morning message lists the ones due as tick boxes.
-- **The organizer** is a small open model on the private repository's own
-  GitHub runner. It reads each message and proposes a thread, a summary,
-  to-dos and a stage; the app shows the proposal with Apply and Ignore.
-- **Pins** keep starred paths at the top. **Search** covers paths, to-dos and
-  messages. **Meeting** notes take who, decisions and actions.
-- **The week is editable**: any block can be moved, retimed, cancelled for one
-  date or for good, and new blocks added, from either device.
-- **Notifications** reach the phone and the PC once turned on in Settings.
-
-## The weekly review
-
-One view that asks what gives: what moved this week, what is stuck with
-someone, how many hours were tracked against capacity, and what is drifting
-with no day, no hours and nobody holding it. Each drifting item offers the only
-three answers that exist: give it a day, delay it, or drop it. The answer goes
-in as a decision.
-
-## Dictation
-
-Both pages carry a microphone on every box that sends something. It uses the
-browser's own speech recognition, Arabic and English with one tap between
-them, and it never repaints the page while it is listening. The browser ends
-a session on its own after a few seconds of silence, after about a minute on
-iPhone, or on a network hiccup; the app restarts it until the stop button is
-tapped, folding what was heard into the box first, and gives up only after a
-minute with nothing heard. Final phrases are kept and only the newest interim
-phrase is shown, which is what stops a sentence repeating itself. Where the browser has no speech
-recognition the button says so and points at the keyboard's own microphone key.
-
-## Keeping a phone current
-
-A phone can hold an old copy of an installed web app for a very long time: the
-shell is cached, the worker that cached it is cached, and nothing in that loop
-ever asks whether anything moved. Three things close it.
-
-- `version.json` carries the current build. Neither the service worker nor the
-  browser cache is allowed to serve it.
-- Both apps read it on open and whenever they come back to the foreground. If
-  the build has moved they clear every cache, remove the worker and reload
-  once. A guard stops that repeating.
-- `update.html` does the same thing by hand, for a copy so stale that it cannot
-  run the check. Open `<your pages url>/update.html` once and the install is
-  repaired.
-
-Settings in both apps shows the running build and carries a **Force update**
-button. **Bump `version.json` on every publish**, together with the `BUILD`
-constant in `core.js`, the `?v=` on the script tags and in the service
-worker's list, and the service worker cache name. If `version.json` moves and
-`BUILD` does not, every open wipes the install and reloads, twice, and the push
-subscriptions die with the worker. That happened on 27 September and was found
-on 21 October.
-
-The apps also check their push subscription on every open. If notifications
-were on and the subscription is gone, they make a new one without asking and
-save it to the repository, so a repaired install keeps its notifications.
+3. In the app, open More, enter the repository as `owner/name`, paste the
+   token and save. The token stays on that device.
+4. Install it: in Chrome or Edge use the install button in the address bar; on
+   a phone use Add to Home Screen.
 
 ## What it expects in your repository
 
@@ -206,7 +53,7 @@ open[]    questions waiting on you
 
 `startMin` and `endMin` are minutes past midnight. A block whose start equals
 its end is a marker rather than a block and never counts as the current one.
-`c` and `colourVar` are CSS custom property names defined in `index.html`.
+`c` and `colourVar` are CSS custom property names defined in `planner.css`.
 
 The app also writes `data/log.jsonl`, one JSON object per tracked session,
 `data/status.jsonl` when a stage is set by hand, and `data/plan.jsonl` when a
@@ -214,59 +61,43 @@ block is assigned to a thread. All three are append-only: the last line for a
 key wins, and nothing is ever rewritten in place.
 
 Threads may also carry `dom` (which category they belong to), `files` (repo
-paths the detail pane can open), `next`, `who` and `critical`. `domains[]`
+paths), `next`, `who` and `critical`. `domains[]`
 gives each category its name and colour.
 
 **`final`** is optional and names where a path ends: `"Accepted"`, `"Granted"`,
 `"Launched"`. Leave it out and the last entry in `st[]` is used, so no board
-needs migrating. **`next`** is the step under your feet right now, and the
-desktop view shows it directly under the path.
+needs migrating. **`next`** is the step under your feet right now.
 
-The desktop view reads a thread as a path: `st[]` are the stones, the current
+The app reads a thread as a path: `st[]` are the stones, the current
 stage is where you stand, and `final` is the flag at the end. `next` is the
 one step after this one. Nothing about that is stored differently; it is the
 same board read as a walk rather than a table.
 
 ## Files
 
-`index.html` is the phone page and `desktop.html` the desktop page; each carries
-its own styling. `core.js` is the code both pages share: reading and writing the
-repository, the offline queue (`WRITES` lists every kind of write), the chase and
-day rules, the dictation merge and notifications. `app.js` is the rest of the
-phone page and `desktop.js` the rest of the desktop page. `sw.js` is the service
-worker, the two `.webmanifest` files make each page installable, `update.html`
-repairs a stale install, and `tests/` holds the checks.
+| File | What it is |
+|---|---|
+| `planner.html` | The page: the frame, the navigation and the two scripts. |
+| `planner.js`, `planner.css` | The five sections and how they look. |
+| `core.js` | Shared logic: reading the repository, the write queue, the timetable, dates, to-dos, notifications, the version check. |
+| `sw.js` | The service worker: keeps the app's own files for offline use and shows notifications. It never caches data. |
+| `update.html` | The repair page: clears a stale install and reopens the app. |
+| `version.json` | The published build. The app compares it with its own and repairs itself when it moves. |
+| `manifest.webmanifest`, `desktop.webmanifest` | The install manifests (phone and wide screen). |
+| `index.html`, `desktop.html`, `brief.html`, `projects.html` | Redirects to `planner.html`, nothing more. |
+| `tests/` | See `tests/README.md`. |
 
-Before this existed the two pages carried a second copy of the shared code, and
-every fix had to be made twice and sometimes was not. A page may use anything in
-`core.js` directly. The one thing `core.js` needs from a page is `afterWrite` and
-`setStage`, which each page registers on `UI` at the top of its script.
+## Changing it
 
-**One building block: the band.** Every card, row and block is a `.band` whose
-accent comes from a single `--a` custom property, and its background is mixed
-from that accent with `color-mix`. Colour is applied to the element itself.
+1. Edit `planner.js`, `planner.css` or `core.js`.
+2. Run the tests: `node tests/logic.unit.js`, `node tests/names.js`,
+   `node tests/planner.e2e.js` (see `tests/README.md` for what they need).
+3. Bump the version in every place together: `build` in `version.json`,
+   `BUILD` in `core.js`, the `?v=` numbers in `planner.html` and in the `SHELL`
+   list of `sw.js`, and `CACHE` in `sw.js`.
+4. Push. Pages publishes in about a minute; check `version.json` on the site.
+   A device that still shows an older build: More, then Repair this app.
 
-Never tint by layering an absolutely positioned pseudo-element over content.
-An earlier build did, and it washed the whole page out and swallowed taps on
-anything the overlay covered. If `color-mix` is unsupported the band falls back
-to a plain surface, which is dull but correct.
-
-Minimum touch target is 44px, base type is 17px, and both themes are real: the
-palette is defined for light and dark and a toggle in the header overrides the
-system setting.
-
-Check before pushing: `node --check core.js app.js desktop.js sw.js`, then the
-scripts in `tests/` (see `tests/README.md`).
-A missing bracket ships a blank screen, and the build mismatch of 27 September
-was only found three weeks later because nothing ran the page.
-
-**Bump the version on every change to `core.js`, `app.js`, `desktop.js`,
-`index.html` or `desktop.html`.** Five places, all together: `build` in
-`version.json`, `BUILD` in `core.js`, the `?v=` on the script tags in both
-HTML files, the same `?v=` entries in the `SHELL` list in `sw.js`, and the
-`CACHE` name there.
-
-This is not tidiness. Pages serves assets with browser caching, so a new
-`index.html` will happily run an old `app.js`, and a nav button added in one
-file calls a function that does not exist in the other. The app is built to
-survive that (an unknown view falls back to Now) but the fix is the version.
+One rule keeps it from growing sideways: a new screen replaces the old one in
+the same commit. No second page, no "classic" copy and no switch between two
+versions.
