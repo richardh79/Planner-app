@@ -47,8 +47,34 @@ function plLoad(){
   Promise.all(jobs).then(function(r){
     if(r[9]){ PORT = r[9]; put("pj.port", PORT); }
     if(r[10]){ BRIEF = r[10]; put("pj.brief", BRIEF); }
+    if(FRESH && BRIEF && BRIEF.asked === FRESH.asked){ FRESH = null; plToast("Fresh from the PC"); }
     plDraw(); flushQueue().then(plDraw);
   });
+}
+
+/* Refresh: read the repository again now, and ask the PC for a new look at every project. The request is one line
+   in data/refresh.jsonl; the PC answers by stamping it into the Brief ("asked"), usually within a minute. */
+var FRESH = null;
+function plRefresh(){
+  if(!token || !REPO()){ location.hash = "#more"; return; }
+  if(FRESH) return;
+  var asked = new Date().toISOString();
+  FRESH = {asked:asked, t:Date.now()};
+  queue.push({kind:"refresh", line:JSON.stringify({at:asked, via:WHERE})}); put(K.queue, queue);
+  plDraw();
+  flushQueue().then(plLoad);
+  (function wait(){
+    setTimeout(function(){
+      if(!FRESH || FRESH.asked !== asked) return;
+      if(Date.now() - FRESH.t > 180000){ FRESH = null; plToast("No answer from the PC: it may be off or asleep"); plDraw(); return; }
+      plLoad(); wait();
+    }, 10000);
+  })();
+}
+/* The PC's newest sign of life: the project summary, the Brief, or the Brief's heartbeat. */
+function pcAt(){
+  var c = [PORT && PORT.at, BRIEF && BRIEF.at, BRIEF && BRIEF.beat].filter(Boolean).sort();
+  return c.length ? c[c.length - 1] : null;
 }
 
 /* Everything as one list of projects and one list of things that wait on him. */
@@ -158,10 +184,11 @@ function plNav(M){
   $("nav").innerHTML = [["today","Today"],["projects","Projects"],["week","Week"],["you","For you"],["more","More"]].map(function(x){
     return '<a href="#' + x[0] + '" class="' + (tab === x[0] ? "on" : "") + '">' + x[1] + (x[0] === "you" && n ? '<span class="n">' + n + '</span>' : "") + '</a>';
   }).join("");
-  /* The PC rewrites "at" when something changed and at least every 30 minutes (phone_portfolio.py HEARTBEAT),
+  /* The Brief carries a heartbeat ("beat") that moves at least every 30 minutes while the PC is on,
      so only a gap longer than that means the PC is not feeding the app. */
-  var at = PORT && PORT.at, stale = at && Date.now() - new Date(at).getTime() > 45 * 60000;
+  var at = pcAt(), stale = at && Date.now() - new Date(at).getTime() > 45 * 60000;
   $("asof").className = "asof" + (stale ? " stale" : "");
+  $("fresh").disabled = !!FRESH; $("fresh").textContent = FRESH ? "Asking the PC…" : "Refresh";
   $("asof").textContent = (at ? "From the PC, " + ago(at) + (stale ? ": the PC may be off or asleep" : "") : (token ? "Waiting for the PC" : "Not connected: open More")) +
     (queue.length ? " · " + queue.length + " change" + (queue.length > 1 ? "s" : "") + " waiting to send" : "");
 }
@@ -682,6 +709,7 @@ document.addEventListener("keydown", function(e){ if(e.key === "Escape") closeSh
 var rsz; window.addEventListener("resize", function(){ clearTimeout(rsz); rsz = setTimeout(function(){ if(route().indexOf("p/") === 0) plDraw(); }, 200); });
 window.addEventListener("hashchange", function(){ $("sheet").classList.remove("on"); $("veil").classList.remove("on"); plDraw(); window.scrollTo(0, 0); });
 document.addEventListener("visibilitychange", function(){ if(!document.hidden) plLoad(); });
+$("fresh").onclick = plRefresh;
 window.addEventListener("online", function(){ flushQueue().then(plDraw); });
 
 mergeAdded(); applyWeekEdits();

@@ -17,7 +17,10 @@ a{color:var(--accent)}
 /* top bar and navigation: a bottom bar on the phone, tabs in the top bar on the PC */
 .top{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
 .brand{font-weight:700;font-size:18px;letter-spacing:-.01em;margin-right:auto}
-.asof{font-size:12px;color:var(--dim);width:100%}
+.asofrow{display:flex;align-items:center;gap:10px;width:100%}
+.asof{font-size:12px;color:var(--dim);flex:1;min-width:0}
+.fresh{font:inherit;font-size:12px;padding:5px 12px;border-radius:999px;border:1px solid var(--line,#8884);background:transparent;color:inherit;cursor:pointer;white-space:nowrap}
+.fresh[disabled]{opacity:.55;cursor:default}
 .asof.stale{color:var(--warn)}
 .nav{display:flex;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:3px}
 .nav a{color:var(--dim);text-decoration:none;font-size:14px;font-weight:600;padding:7px 12px;border-radius:9px;white-space:nowrap;position:relative}

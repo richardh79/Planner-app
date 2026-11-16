@@ -118,6 +118,9 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) fails++
     ok(wrote("data/plan.jsonl", /"thread":"course"/), vp.name + ": a project goes on a block in plan.jsonl");
     await page.click("#fab"); await page.fill("#aText", "Buy printer ink"); await page.click('[data-addgo="todo"]'); await page.waitForTimeout(800);
     ok(wrote("data/todos.jsonl", /Buy printer ink/), vp.name + ": a to-do goes to todos.jsonl");
+    await page.click("#fresh"); await page.waitForTimeout(800);
+    ok(wrote("data/refresh.jsonl", /"at":"\d{4}-/), vp.name + ": Refresh asks the PC through refresh.jsonl");
+    ok(/Asking the PC/.test(await page.textContent("#fresh")), vp.name + ": Refresh shows that it waits for the PC");
     ok(errors.length === 0, vp.name + ": no script errors" + (errors.length ? " (" + errors.slice(0, 3).join("; ") + ")" : ""));
     await ctx.close();
   }

@@ -18,7 +18,7 @@ var K = { tok:"planner.token", repo:"planner.repo", board:"planner.board", focus
 /* Which page this is. Both pages share this file, and the commit message of every write names the device. */
 var WHERE = /desktop\.html/i.test(location.pathname) ? "desktop" : "phone";
 
-var BUILD = "2026-11-17.1";   // bumped on every publish, checked against version.json
+var BUILD = "2026-11-17.2";   // bumped on every publish, checked against version.json
 function REPO(){ return getRaw(K.repo) || ""; }
 function API(){ return "https://api.github.com/repos/" + REPO(); }
 
@@ -233,7 +233,8 @@ var WRITES = {
   week:   ["data/week.jsonl",        "Timetable changed from the "+WHERE],
   todo:   ["data/todos.jsonl",       "To-do from the "+WHERE],
   pin:    ["data/pins.jsonl",        "Pinned from the "+WHERE],
-  sugg:   ["data/suggestions.jsonl", "Suggestion decided on the "+WHERE]
+  sugg:   ["data/suggestions.jsonl", "Suggestion decided on the "+WHERE],
+  refresh:["data/refresh.jsonl",     "Refresh asked from the "+WHERE]
 };
 function flushOnce(){
   if(!token || !queue.length) return Promise.resolve();
