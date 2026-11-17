@@ -146,7 +146,10 @@ function plModel(){
   D.forEach(function(d){
     var x = d.pid ? projects.filter(function(p){ return p.id === d.pid; })[0] : null;
     var ongoing = d.kind === "go" || d.kind === "todo" || (x && !x.path && !isClosed(x));
-    d.later = d.kind === "date" || d.kind === "reminder" || !ongoing;
+    /* A task belongs to today only while a window works in its project; a resting or submitted project keeps
+       its tasks folded. Questions and Go calls always show. */
+    var resting = d.kind === "task" && x && (!x.t || x.t.state === "off" || x.t.submitted);
+    d.later = d.kind === "date" || d.kind === "reminder" || !ongoing || resting;
   });
   projects.forEach(function(x){ x.dec = D.filter(function(d){ return d.pid === x.id && d.kind !== "date"; }); x.light = lightOf(x); x.late = lateOf(x); });
   return {projects:projects, D:D, byThread:byThread};
@@ -163,6 +166,7 @@ function lightOf(x){
   return s === "silent" ? "idle" : (LIGHT[s] ? s : "off");
 }
 function lateOf(x){
+  if(x.t && x.t.submitted) return 0;            /* handed over: its date no longer runs */
   var d = recOf(x).dates || {}, due = d.due || (x.p && x.p.due), p85 = d.p85 || (x.p && x.p.p85);
   return due && p85 && dd(p85, due) > 0 ? dd(p85, due) : 0;
 }
@@ -224,7 +228,8 @@ function plCard(x){
   else {
     if(due) dates.push("Due " + fmtS(due));
     if(p85) dates.push("likely " + fmtS(p85));
-    if(x.late) dates.push('<span class="chip bad">' + x.late + ' d late</span>');
+    if(x.t && x.t.submitted) dates.push('<span class="chip good">submitted</span>');
+    else if(x.late) dates.push('<span class="chip bad">' + x.late + ' d late</span>');
     else if(due && p85) dates.push('<span class="chip good">on time</span>');
     if(x.th && needsChase(x.th)) dates.push('<span class="chip warn">waiting on ' + esc(cleanWho(x.th)) + ' · ' + clockDays(x.th) + ' d</span>');
   }
