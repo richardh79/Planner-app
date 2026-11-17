@@ -170,10 +170,32 @@ function lateOf(x){
   var d = recOf(x).dates || {}, due = d.due || (x.p && x.p.due), p85 = d.p85 || (x.p && x.p.p85);
   return due && p85 && dd(p85, due) > 0 ? dd(p85, due) : 0;
 }
-function hcol(x){ return x.path ? (x.th.c || "--neutral") : x.p && x.p.health ? H[x.p.health] : "--off"; }
+/* Where a project stands, in one word. The plan's health is only the last word while the project is in work:
+   a submitted project is "Submitted" whatever its plan still says, and a project with no open window and nothing
+   waiting on him is "Resting", not a problem. */
+function standOf(x){
+  if(x.path) return {word:"", col:x.th.c || "--neutral"};
+  if(x.t && x.t.submitted) return {word:"Submitted", col:"--good", sub:true};
+  var asks = (x.dec || []).some(function(d){ return d.kind === "question" || d.kind === "go"; });
+  var w = x.p && x.p.window ? x.p.window.state : null, shut = (!x.t || x.t.state === "off") && w !== "working" && w !== "idle";
+  if(shut && !asks && !isClosed(x)) return {word:"Resting", col:"--off", rest:true};
+  return {word:x.p && x.p.health ? HW[x.p.health] : "No plan", col:x.p && x.p.health ? H[x.p.health] : "--off"};
+}
+function hcol(x){ return standOf(x).col; }
+/* The session's own report wins over the plan when it is the newer of the two. */
+function fromSession(x){
+  if(!x.t || x.t.pct == null) return false;
+  if(!x.p || x.p.progress == null) return true;
+  var u = recOf(x).updated; return !!(x.t.heard && (!u || String(x.t.heard) >= String(u).slice(0, 16)));
+}
 function pctOf(x){
   if(x.path) return isUnset(x.th) ? null : walked(x.th);
-  var v = x.p && x.p.progress != null ? x.p.progress : (x.t ? x.t.pct : null); return v == null ? null : Math.round(v);
+  if(x.t && x.t.submitted) return 100;
+  var v = fromSession(x) ? x.t.pct : (x.p && x.p.progress != null ? x.p.progress : null); return v == null ? null : Math.round(v);
+}
+function phaseOf(x){
+  if(x.t && x.t.submitted) return "Waiting for an answer";
+  return fromSession(x) ? "" : ((x.p && x.p.phase) || "");
 }
 function activePath(t){
   var b = bucketOf(t);                     // a passed date is for the clean-up list, not a sign of activity
@@ -237,9 +259,9 @@ function plCard(x){
   var next = isClosed(x) ? (r.closed && r.closed.left ? r.closed.left + " step" + (r.closed.left > 1 ? "s" : "") + " left" : "") :
              (x.t && x.t.next) || (x.p && x.p.next) || "";
   return '<a class="card" href="#p/' + esc(x.id) + '" style="--h:var(' + hcol(x) + ')">' +
-    '<div class="row"><span class="name any">' + esc(x.name) + '</span><span class="hw">' + esc(x.p && x.p.health ? HW[x.p.health] : "No plan") + '</span></div>' +
+    '<div class="row"><span class="name any">' + esc(x.name) + '</span><span class="hw">' + esc(standOf(x).word) + '</span></div>' +
     '<div class="row" style="margin-top:4px"><span class="light ' + x.light + '"><i></i>' + LIGHT[x.light] + '</span>' + (nd ? '<span class="flag">⚑ ' + nd + '</span>' : "") + '</div>' +
-    '<div class="stage any">' + [esc((x.p && x.p.phase) || ""), v != null ? v + "%" : ""].filter(Boolean).join(" · ") + '</div>' +
+    '<div class="stage any">' + [esc(phaseOf(x)), v != null ? v + "%" : ""].filter(Boolean).join(" · ") + '</div>' +
     (v != null ? '<div class="bar"><i style="width:' + Math.min(100, v) + '%"></i></div>' : "") +
     (dates.length ? '<div class="dates">' + dates.join(" ") + '</div>' : "") +
     (next ? '<div class="next any">' + (isClosed(x) ? "" : "Next: ") + esc(next) + '</div>' : "") + '</a>';
@@ -315,7 +337,7 @@ function vProjects(M){
   var live = M.projects.filter(function(x){ return !isClosed(x); }), done = M.projects.filter(isClosed);
   var n = countFor(M.D), late = live.filter(function(x){ return x.late; }).length, work = live.filter(function(x){ return x.light === "working"; }).length;
   function rank(x){
-    return x.dec.some(function(d){ return d.kind !== "reminder"; }) ? 0 : x.p && x.p.health === "red" ? 1 : x.light === "working" ? 2 :
+    return x.dec.some(function(d){ return d.kind !== "reminder"; }) ? 0 : x.p && x.p.health === "red" && !standOf(x).sub && !standOf(x).rest ? 1 : x.light === "working" ? 2 :
            x.p && x.p.health === "amber" ? 3 : x.p && x.p.health === "green" ? 4 : !x.path ? 5 : needsChase(x.th) ? 6 : 7;
   }
   live.sort(function(a, b){ return rank(a) - rank(b) || a.name.localeCompare(b.name); });
@@ -451,7 +473,7 @@ function vProject(M, id){
   if(x.th){ out.push('<div class="box wide" style="background:transparent;border:0;padding:6px 0 0"><h3>In the Planner: ' + esc(x.th.n) + '</h3></div>'); out = out.concat(pathBoxes(x.th)); }
   if(!x.p && !x.th) out.push('<div class="box wide"><p class="dsub">No project plan on the PC for this one yet: only what its window reports. Ask Richard to set one up if it should be managed.</p></div>');
   $("main").innerHTML = '<a class="back" href="#projects">‹ Projects</a>' +
-    '<div class="phead" style="--h:var(' + hcol(x) + ')"><h1 class="any">' + esc(x.name) + '</h1><span class="pill">' + esc(x.p && x.p.health ? HW[x.p.health] : "No plan") + '</span></div>' +
+    '<div class="phead" style="--h:var(' + hcol(x) + ')"><h1 class="any">' + esc(x.name) + '</h1><span class="pill">' + esc(standOf(x).word) + '</span></div>' +
     '<div class="pwin">' + win + '</div><div class="pgrid">' + out.join("") + '</div>';
   $("main").dataset.pid = id;
 }
