@@ -218,7 +218,8 @@ function plNav(M){
   $("asof").className = "asof" + (stale ? " stale" : "");
   $("fresh").disabled = !!FRESH; $("fresh").textContent = FRESH ? "Asking the PC…" : "Refresh";
   $("asof").textContent = (at ? "From the PC, " + ago(at) + (stale ? ": the PC may be off or asleep" : "") : (token ? "Waiting for the PC" : "Not connected: open More")) +
-    (queue.length ? " · " + queue.length + " change" + (queue.length > 1 ? "s" : "") + " waiting to send" : "");
+    (queue.length ? " · " + queue.length + " change" + (queue.length > 1 ? "s" : "") + " waiting to send" : "") +
+    " · version " + BUILD.slice(5) + (UPDATE_NOTE ? " · " + UPDATE_NOTE : "");
 }
 function plDraw(){
   var M = plModel(), r = route(), main = $("main");
@@ -745,17 +746,41 @@ document.addEventListener("click", function(ev){
 document.addEventListener("keydown", function(e){ if(e.key === "Escape") closeSheet(); });
 var rsz; window.addEventListener("resize", function(){ clearTimeout(rsz); rsz = setTimeout(function(){ if(route().indexOf("p/") === 0) plDraw(); }, 200); });
 window.addEventListener("hashchange", function(){ $("sheet").classList.remove("on"); $("veil").classList.remove("on"); plDraw(); window.scrollTo(0, 0); });
-document.addEventListener("visibilitychange", function(){ if(!document.hidden) plLoad(); });
+document.addEventListener("visibilitychange", function(){ if(!document.hidden){ plLoad(); plUpdate(); } });
 $("fresh").onclick = plRefresh;
 window.addEventListener("online", function(){ flushQueue().then(plDraw); });
 
 mergeAdded(); applyWeekEdits();
 plDraw();
 plLoad();
+/* The app replaces itself when a newer build is published. An installed app is rarely opened afresh: it is
+   resumed, and a resumed page keeps the code it was started with for days. So the published build number is
+   asked for at start, on every return to the app and every five minutes, and a newer one reloads the page. */
+var UPDATE_NOTE = "";
+function plUpdate(){
+  if(!window.fetch) return;
+  fetch("version.json?t=" + Date.now(), {cache:"no-store"}).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
+    if(!j || !j.build) return;
+    if(j.build === BUILD){ try{ sessionStorage.removeItem("pl.upd"); }catch(e){} return; }
+    if(busyHands()) return;
+    var n = 0; try{ n = parseInt(sessionStorage.getItem("pl.upd") || "0", 10) || 0; }catch(e){}
+    try{ sessionStorage.setItem("pl.upd", String(n + 1)); }catch(e){}
+    if(n === 0){
+      var go = function(){ location.reload(); };
+      if(navigator.serviceWorker && navigator.serviceWorker.getRegistration)
+        navigator.serviceWorker.getRegistration().then(function(r){ return r && r.update(); }).catch(function(){}).then(go);
+      else go();
+    }
+    else if(n === 1) repairInstall();
+    else { UPDATE_NOTE = "A newer version is waiting: More, then Repair this app"; plDraw(); }
+  }).catch(function(){});
+}
 /* The minute reload never redraws under his hands: not while a sheet is open or he is typing. */
 function busyHands(){
   var a = document.activeElement;
   return !!document.querySelector(".sheet.on") || !!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
 }
 setInterval(function(){ if(!document.hidden && !busyHands()) plLoad(); }, 60000);
+plUpdate();
+setInterval(function(){ if(!document.hidden) plUpdate(); }, 300000);
 if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(function(){});
