@@ -169,27 +169,30 @@ function lightOf(x){
 }
 function lateOf(x){
   if(x.t && x.t.submitted) return 0;            /* handed over: its date no longer runs */
+  if(!x.t || x.t.state === "off") return 0;     /* resting: no window is working towards the date */
   var d = recOf(x).dates || {}, due = d.due || (x.p && x.p.due), p85 = d.p85 || (x.p && x.p.p85);
   return due && p85 && dd(p85, due) > 0 ? dd(p85, due) : 0;
 }
 /* Where a project stands, in one word. The plan's health is only the last word while the project is in work:
    a submitted project is "Submitted" whatever its plan still says, and a project with no open window and nothing
    waiting on him is "Resting", not a problem. */
+/* The session is the voice of a project; its written plan is only the fallback when no session ever reported.
+   So an open project's word follows its window (in work, needs you, stopped), never a stale plan's health. */
 function standOf(x){
   if(x.path) return {word:"", col:x.th.c || "--neutral"};
   if(x.t && x.t.submitted) return {word:"Submitted", col:"--good", sub:true};
-  var asks = (x.dec || []).some(function(d){ return d.kind === "question" || d.kind === "go"; });
-  var w = x.p && x.p.window ? x.p.window.state : null, shut = (!x.t || x.t.state === "off") && w !== "working" && w !== "idle";
-  if(shut && !asks && !isClosed(x)) return {word:"Resting", col:"--off", rest:true};
+  var asks = (x.dec || []).some(function(d){ return !d.later && (d.kind === "question" || d.kind === "go"); });
+  var w = x.p && x.p.window ? x.p.window.state : null, s = x.t ? x.t.state : null;
+  var open = (s && s !== "off") || w === "working" || w === "idle";
+  if(!open && !asks && !isClosed(x)) return {word:"Resting", col:"--off", rest:true};
+  if(s === "blocked") return {word:"Stopped", col:"--bad"};
+  if(asks || s === "waiting") return {word:"Needs you", col:"--warn"};
+  if(open) return {word:"In work", col:"--good"};
   return {word:x.p && x.p.health ? HW[x.p.health] : "No plan", col:x.p && x.p.health ? H[x.p.health] : "--off"};
 }
 function hcol(x){ return standOf(x).col; }
 /* The session's own report wins over the plan when it is the newer of the two. */
-function fromSession(x){
-  if(!x.t || x.t.pct == null) return false;
-  if(!x.p || x.p.progress == null) return true;
-  var u = recOf(x).updated; return !!(x.t.heard && (!u || String(x.t.heard) >= String(u).slice(0, 16)));
-}
+function fromSession(x){ return !!(x.t && x.t.pct != null); }
 function pctOf(x){
   if(x.path) return isUnset(x.th) ? null : walked(x.th);
   if(x.t && x.t.submitted) return 100;
@@ -258,7 +261,7 @@ function plCard(x){
     else if(due && p85) dates.push('<span class="chip good">on time</span>');
     if(x.th && needsChase(x.th)) dates.push('<span class="chip warn">waiting on ' + esc(cleanWho(x.th)) + ' · ' + clockDays(x.th) + ' d</span>');
   }
-  var nd = x.dec.filter(function(z){ return z.kind !== "reminder"; }).length;
+  var nd = x.dec.filter(function(z){ return !z.later && z.kind !== "reminder"; }).length;
   var next = isClosed(x) ? (r.closed && r.closed.left ? r.closed.left + " step" + (r.closed.left > 1 ? "s" : "") + " left" : "") :
              (x.t && x.t.next) || (x.p && x.p.next) || "";
   return '<a class="card" href="#p/' + esc(x.id) + '" style="--h:var(' + hcol(x) + ')">' +
@@ -348,7 +351,7 @@ function vProjects(M){
   var live = M.projects.filter(function(x){ return !isClosed(x); }), done = M.projects.filter(isClosed);
   var n = countFor(M.D), late = live.filter(function(x){ return x.late; }).length, work = live.filter(function(x){ return x.light === "working"; }).length;
   function rank(x){
-    return x.dec.some(function(d){ return d.kind !== "reminder"; }) ? 0 : x.p && x.p.health === "red" && !standOf(x).sub && !standOf(x).rest ? 1 : x.light === "working" ? 2 :
+    return x.dec.some(function(d){ return d.kind !== "reminder"; }) ? 0 : standOf(x).word === "Stopped" ? 1 : x.light === "working" ? 2 :
            x.p && x.p.health === "amber" ? 3 : x.p && x.p.health === "green" ? 4 : !x.path ? 5 : needsChase(x.th) ? 6 : 7;
   }
   live.sort(function(a, b){ return rank(a) - rank(b) || a.name.localeCompare(b.name); });
