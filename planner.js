@@ -149,7 +149,9 @@ function plModel(){
     /* A task belongs to today only while a window works in its project; a resting or submitted project keeps
        its tasks folded. Questions and Go calls always show. */
     var resting = d.kind === "task" && x && (!x.t || x.t.state === "off" || x.t.submitted);
-    d.later = d.kind === "date" || d.kind === "reminder" || !ongoing || resting;
+    /* Steps copied from a project's written plan are shown on the project's own page only: a plan is often
+       behind the session, and "For you" must hold only what a session or he himself has asked for. */
+    d.later = d.kind === "date" || d.kind === "reminder" || !ongoing || resting || !!d.plan;
   });
   projects.forEach(function(x){ x.dec = D.filter(function(d){ return d.pid === x.id && d.kind !== "date"; }); x.light = lightOf(x); x.late = lateOf(x); });
   return {projects:projects, D:D, byThread:byThread};
@@ -297,13 +299,23 @@ function vToday(M){
       (nx ? 'Next: ' + hm(nx[4]) + ' ' + esc(nx[1]) : "Nothing else on the timetable today") + '</div></div>';
   }
   var rb = PORT && PORT.richard;
-  if(rb && rb.lines && rb.lines.length){
+  if(rb && rb.lines && rb.lines.length && Date.now() - new Date(rb.at).getTime() < 5 * 3600000){   /* an old brief is noise */
     html += '<div class="rich"><div class="k">Richard · ' + esc(rb.kind === "morning" ? "morning brief" : "evening wrap") + ', ' + esc(ago(rb.at)) + '</div>' +
       rb.lines.slice(0, 3).map(function(l){ return '<p class="any">' + esc(l) + '</p>'; }).join("") + '</div>';
   }
   var top = M.D.filter(function(d){ return !d.later; }), n = top.length;
   var left = '<div class="box needs"><h3>For you · ' + n + (n > 3 ? '<a href="#you">all ›</a>' : "") + '</h3>' +
     (n ? top.slice(0, 3).map(function(d){ return drow(d, true); }).join("") : '<p class="empty">Nothing waits on you.</p>') + '</div>';
+  /* Every project with an open window, whatever it is doing: what it is on and when it last spoke. */
+  var open = M.projects.filter(function(x){ return !x.path && x.t && x.t.state && x.t.state !== "off"; });
+  left += '<div class="box" style="margin-top:10px"><h3>Open now · ' + open.length + '<a href="#projects">all projects ›</a></h3>' +
+    (open.length ? open.map(function(x){
+      var v = pctOf(x);
+      return '<a class="li" href="#p/' + esc(x.id) + '" style="text-decoration:none;color:inherit;align-items:flex-start">' +
+        '<span class="light ' + x.light + '" style="margin-top:3px"><i></i></span><span class="any" style="flex:1;min-width:0"><b>' + esc(x.name) + '</b>' +
+        (v != null ? ' <span class="dsub">' + v + '%</span>' : "") + '<br><span class="dsub">' + esc(LIGHT[x.light] || "") +
+        (x.t.next ? ' · ' + esc(x.t.next) : "") + (x.t.heard ? ' · ' + esc(ago(x.t.heard)) : "") + '</span></span></a>'; }).join("") :
+      '<p class="empty">No project window is open on the PC.</p>') + '</div>';
   var day = board.week[now.getDay()] || [];
   left += '<div class="box" style="margin-top:10px"><h3>Today\'s blocks<a href="#week">week ›</a></h3>' + (day.length ? day.map(function(b, i){
     var who = planned(localDay(), i), th2 = who ? T(who) : null, past = b[5] <= t && b[5] > b[4], isCur = cur && cur.i === i;
@@ -312,13 +324,11 @@ function vToday(M){
       '<span class="bp any' + (b[6] && !th2 ? " empty" : "") + '">' + esc(th2 ? th2.n : b[6] ? "Empty: tap to put a project on it" : (b[2] || "")) + '</span></span></button>';
   }).join("") : '<p class="empty">No blocks today.</p>') + '</div>';
   var work = M.projects.filter(function(x){ return x.light === "working"; });
-  var right = '<div class="box"><h3>Moving now</h3>' + (work.length ? '<div class="pchips">' + work.map(function(x){
-    return '<a class="pchip" href="#p/' + esc(x.id) + '"><span class="light working"><i></i></span>' + esc(x.name) + '</a>'; }).join("") + '</div>' :
-    '<p class="empty">No window is working right now.</p>') + '</div>';
-  var late = M.projects.filter(function(x){ return x.late && !isClosed(x); });
+  var right = "";
+  var late = M.projects.filter(function(x){ return x.late && !isClosed(x) && !standOf(x).rest; });
   var soon = M.projects.filter(function(x){ var d = recOf(x).dates || {}; return d.due && dd(d.due, localDay()) >= 0 && dd(d.due, localDay()) <= 7 && !isClosed(x); });
   if(late.length || soon.length){
-    right += '<div class="box" style="margin-top:10px"><h3>Dates to watch</h3>' + late.map(function(x){
+    right += '<div class="box"><h3>Dates to watch</h3>' + late.map(function(x){
       return '<a class="li" href="#p/' + esc(x.id) + '" style="text-decoration:none;color:inherit"><span class="chip bad">' + x.late + ' d late</span><span class="any">' + esc(x.name) + '</span></a>'; }).join("") +
       soon.filter(function(x){ return late.indexOf(x) < 0; }).map(function(x){
       return '<a class="li" href="#p/' + esc(x.id) + '" style="text-decoration:none;color:inherit"><span class="chip">due ' + esc(fmtS(recOf(x).dates.due)) + '</span><span class="any">' + esc(x.name) + '</span></a>'; }).join("") + '</div>';
@@ -742,5 +752,10 @@ window.addEventListener("online", function(){ flushQueue().then(plDraw); });
 mergeAdded(); applyWeekEdits();
 plDraw();
 plLoad();
-setInterval(function(){ if(!document.hidden) plLoad(); }, 60000);
+/* The minute reload never redraws under his hands: not while a sheet is open or he is typing. */
+function busyHands(){
+  var a = document.activeElement;
+  return !!document.querySelector(".sheet.on") || !!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+}
+setInterval(function(){ if(!document.hidden && !busyHands()) plLoad(); }, 60000);
 if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(function(){});
