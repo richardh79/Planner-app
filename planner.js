@@ -460,27 +460,38 @@ function vProject(M, id){
       (c.outcome ? '<p class="any">' + esc(c.outcome) + '</p>' : "") + '<p class="dsub" style="margin-top:6px">' + (c.left ? c.left + " step" + (c.left > 1 ? "s" : "") + " left" : "Nothing left") + '</p>' +
       (c.left_titles || []).map(function(t){ return '<div class="li any">' + esc(t) + '</div>'; }).join("") +
       (c.restart ? '<p class="note any">Restart when: ' + esc(c.restart) + '</p>' : "") + '</div>');
-  } else if(x.dec.length){
-    out.push('<div class="box needs wide"><h3>Needs you · ' + x.dec.length + '</h3>' + x.dec.map(function(d){ return drow(d, false); }).join("") + '</div>');
+  } else if(x.dec.some(function(z){ return !z.later; })){
+    out.push('<div class="box needs wide"><h3>Needs you · ' + x.dec.filter(function(z){ return !z.later; }).length + '</h3>' + x.dec.filter(function(z){ return !z.later; }).map(function(d){ return drow(d, false); }).join("") + '</div>');
   }
-  if(r.phases && r.phases.length) out.push(schedule(x));
-  if(v != null) out.push('<div class="box"><h3>Progress</h3><div class="prog"><span class="big">' + v + '%</span><span class="sub">' +
+  /* One picture of the project on every page: the same word, percentage and next step as its card and as Today.
+     What the written plan says (schedule, steps, risks, past decisions) is kept below, folded, because a plan is
+     often behind the session. */
+  var plan = [], fromPlan = x.dec.filter(function(z){ return z.later; });
+  if(!isClosed(x)) out.push('<div class="box wide"><h3>Now</h3><div class="prog"><span class="big">' + (v != null ? v + "%" : "–") + '</span><span class="sub">' +
+      esc(standOf(x).word) + (phaseOf(x) ? " · " + esc(phaseOf(x)) : "") + '<br>' + esc(LIGHT[x.light] || "") + (x.t && x.t.heard ? " · last report " + esc(ago(x.t.heard)) : "") + '</span></div>' +
+      ((x.t && x.t.next) || (x.p && x.p.next) ? '<p class="any" style="margin-top:8px"><b>Next:</b> ' + esc((x.t && x.t.next) || x.p.next) + '</p>' : "") + '</div>');
+  if(r.phases && r.phases.length) plan.push(schedule(x));
+  if(v != null) plan.push('<div class="box"><h3>Progress in the plan</h3><div class="prog"><span class="big">' + (x.p && x.p.progress != null ? Math.round(x.p.progress) : v) + '%</span><span class="sub">' +
       (r.total ? r.passed + " of " + r.total + " steps done<br>" : "") + esc((x.p && x.p.phase) || "") + '</span></div>' + spark(r.trend) + '</div>');
   var nx = r.next3 || (x.t && x.t.next ? [{title:x.t.next, owner:"assistant"}] : []);
-  if(nx.length && !isClosed(x)) out.push('<div class="box"><h3>Next</h3>' + nx.map(function(n, i){
+  if(nx.length && !isClosed(x)) plan.push('<div class="box"><h3>Next</h3>' + nx.map(function(n, i){
       return '<div class="li"><b>' + (i + 1) + '</b><span class="any">' + esc(n.title) + '</span><span class="who' + (n.owner === "author" ? " you" : "") + '" style="margin-left:auto">' +
         (n.owner === "author" ? "you" : "team") + '</span></div>'; }).join("") + '</div>');
   if(r.top_risks && r.top_risks.length){
-    out.push('<div class="box"><h3>Risks · ' + (r.risk_count || r.top_risks.length) + ' open</h3>' + r.top_risks.map(function(k){
+    plan.push('<div class="box"><h3>Risks · ' + (r.risk_count || r.top_risks.length) + ' open</h3>' + r.top_risks.map(function(k){
       var c2 = k.score >= 15 ? "hi" : k.score >= 9 ? "md" : "lo";
       return '<div class="li"><span class="score ' + c2 + '">' + esc(k.score) + '</span><span class="any">' + esc(k.title) + '</span></div>'; }).join("") +
       (r.risk_count > r.top_risks.length ? '<div class="dsub">+' + (r.risk_count - r.top_risks.length) + ' more in the plan</div>' : "") + '</div>');
-  } else if(r.risk_count) out.push('<div class="box"><h3>Risks</h3><p>' + r.risk_count + ' open (detail kept on the PC)</p></div>');
-  if(r.decisions && r.decisions.length) out.push('<div class="box"><h3>Recent decisions</h3>' + r.decisions.map(function(k){
+  } else if(r.risk_count) plan.push('<div class="box"><h3>Risks</h3><p>' + r.risk_count + ' open (detail kept on the PC)</p></div>');
+  if(r.decisions && r.decisions.length) plan.push('<div class="box"><h3>Recent decisions</h3>' + r.decisions.map(function(k){
       return '<div class="li"><span class="dsub" style="white-space:nowrap">' + esc(fmtS(k.date)) + '</span><span class="any">' + esc(k.call) + (k.answer ? ' <b>' + esc(k.answer) + '</b>' : "") + '</span></div>'; }).join("") + '</div>');
-  if(x.p && x.p.why && x.p.why.length && !isClosed(x)) out.push('<div class="box"><h3>Why this health</h3>' + x.p.why.map(function(w){ return '<div class="li any">' + esc(w.replace(/^EXCEPTION:\s*/, "")) + '</div>'; }).join("") + '</div>');
-  if(r.doc_status || r.doc_plan) out.push('<div class="box"><h3>Documents</h3><div class="btns">' + (r.doc_status ? '<button class="btn" data-doc="status">Status report</button>' : "") +
+  if(x.p && x.p.why && x.p.why.length && !isClosed(x)) plan.push('<div class="box"><h3>Why this health</h3>' + x.p.why.map(function(w){ return '<div class="li any">' + esc(w.replace(/^EXCEPTION:\s*/, "")) + '</div>'; }).join("") + '</div>');
+  if(r.doc_status || r.doc_plan) plan.push('<div class="box"><h3>Documents</h3><div class="btns">' + (r.doc_status ? '<button class="btn" data-doc="status">Status report</button>' : "") +
       (r.doc_plan ? '<button class="btn" data-doc="plan">Plan</button>' : "") + '</div></div>');
+  if(fromPlan.length) plan.unshift('<div class="box wide"><h3>Steps the plan gives you · ' + fromPlan.length + '</h3>' + fromPlan.map(function(d){ return drow(d, false); }).join("") + '</div>');
+  if(plan.length) out.push('<div class="fold wide" data-fold role="button" tabindex="0" style="grid-column:1/-1"><b>Project plan</b>' +
+      (r.updated ? ' · written ' + esc(fmtS(String(r.updated).slice(0, 10))) : "") + (fromSession(x) && x.p && x.p.progress != null && Math.abs(x.p.progress - x.t.pct) > 10 ? ' · behind the session' : "") +
+      '<div class="fold-body"><div class="pgrid">' + plan.join("") + '</div></div></div>');
   if(x.th){ out.push('<div class="box wide" style="background:transparent;border:0;padding:6px 0 0"><h3>In the Planner: ' + esc(x.th.n) + '</h3></div>'); out = out.concat(pathBoxes(x.th)); }
   if(!x.p && !x.th) out.push('<div class="box wide"><p class="dsub">No project plan on the PC for this one yet: only what its window reports. Ask Richard to set one up if it should be managed.</p></div>');
   $("main").innerHTML = '<a class="back" href="#projects">‹ Projects</a>' +
