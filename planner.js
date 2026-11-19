@@ -242,7 +242,8 @@ function plDraw(){
 /* ---------- shared pieces ---------- */
 function drow(d, withProject){
   var mk = {go:"!", question:"?", task:"•", todo:"✓", date:"", reminder:""}[d.kind];
-  var by = d.detail && d.detail.by ? (d.detail.by < localDay() ? "was " : "by ") + fmtS(d.detail.by) : "";
+  var by = d.detail && d.detail.by ? (d.detail.by < localDay() ? "was " : "by ") + fmtS(d.detail.by) :
+           d.detail && d.detail.raised ? "asked " + ago(d.detail.raised) : "";
   return '<button class="drow" data-d="' + esc(d.q) + '"><span class="mark k-' + d.kind + '">' + mk + '</span>' +
     '<span style="min-width:0"><span class="dlab any">' + esc(d.kind === "date" ? d.text : dLabel(d.text, d.detail && d.detail.label)) + '</span>' +
     (withProject ? '<br><span class="dsub any">' + esc(d.project) + '</span>' : "") + '</span>' +
@@ -632,11 +633,15 @@ function closeSheet(){
   $("sheet").classList.remove("on"); $("veil").classList.remove("on");
   if(reviewLog.length){ reviewFinish(); }
 }
+function stamp(s){ var x = new Date(s); return isNaN(x) ? String(s) : x.toLocaleDateString("en-GB", {weekday:"short", day:"numeric", month:"short"}) + " " + x.toLocaleTimeString("en-GB", {hour:"2-digit", minute:"2-digit"}); }
 function decisionSheet(d){
   var t = d.detail || {}, kv = [];
   function add(k, v){ if(v) kv.push('<dt>' + k + '</dt><dd>' + v + '</dd>'); }
   add("What", esc(d.text) + (t.what && t.what.length ? '<br><span class="dsub">' + t.what.map(esc).join("<br>") + '</span>' : ""));
   add("Project", esc(d.project));
+  if(t.raised) add("Asked", esc(stamp(t.raised)) + " · " + esc(ago(t.raised)));
+  if(t.since && t.since.length) add("Since then", t.since.map(function(s){ return '<span class="dsub">' + esc(stamp(s.at)) + '</span> ' + esc(s.text); }).join("<br>") +
+      '<br><span class="dsub">The project moved after this was asked. If you already settled it in the session, this card is still the official answer.</span>');
   add("Why", esc(t.why));
   if(d.kind === "question" || d.kind === "go"){
     add("If yes", esc(t.yes)); add("If no", esc(t.no));
